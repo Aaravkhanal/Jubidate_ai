@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from backend.app.model_registry import (
+from app.model_registry import (
     MODEL_MAP,
     _MODEL_RUNTIME_CACHE,
     _MODEL_ROUTE_FAILURE_CACHE,
