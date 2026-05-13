@@ -1,0 +1,4 @@
+fastapi>=0.115.8,<1.0.0
+uvicorn[standard]>=0.34.0,<1.0.0
+litellm>=1.60.0,<2.0.0
+python-dotenv>=1.0.1,<2.0.0

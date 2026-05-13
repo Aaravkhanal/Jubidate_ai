@@ -1,0 +1,81 @@
+
+> jubidate-ai@0.1.0 dev
+> next dev
+
+ ⚠ Port 3000 is in use by process 32074, using available port 3001 instead.
+   ▲ Next.js 15.5.15
+   - Local:        http://localhost:3001
+   - Network:      http://10.210.17.115:3001
+
+ ✓ Starting...
+ ✓ Ready in 1783ms
+ ○ Compiling / ...
+ ✓ Compiled / in 718ms (1342 modules)
+ GET / 200 in 957ms
+ ✓ Compiled in 801ms (639 modules)
+ ✓ Compiled in 573ms (639 modules)
+ ✓ Compiled in 457ms (639 modules)
+ ✓ Compiled in 288ms (639 modules)
+ ✓ Compiled in 480ms (639 modules)
+ ✓ Compiled in 386ms (639 modules)
+ ✓ Compiled in 514ms (639 modules)
+ ✓ Compiled in 420ms (639 modules)
+ ✓ Compiled in 523ms (639 modules)
+ ✓ Compiled in 350ms (639 modules)
+ ✓ Compiled in 891ms (639 modules)
+ ✓ Compiled in 584ms (625 modules)
+ ✓ Compiled in 432ms (639 modules)
+ ✓ Compiled in 376ms (625 modules)
+ ✓ Compiled in 242ms (639 modules)
+ ✓ Compiled in 153ms (639 modules)
+ ✓ Compiled in 116ms (639 modules)
+ ✓ Compiled in 43ms (625 modules)
+ ✓ Compiled in 179ms (639 modules)
+ ✓ Compiled in 288ms (625 modules)
+ ✓ Compiled in 546ms (639 modules)
+ ✓ Compiled in 279ms (639 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 603ms (717 modules)
+ ⨯ Error: Could not find the module "/Users/aaravkhanal/AI-Debate-Council/frontend/node_modules/next/dist/next-devtools/userspace/app/segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1900474511'
+}
+ ⨯ Error: Could not find the module "/Users/aaravkhanal/AI-Debate-Council/frontend/node_modules/next/dist/next-devtools/userspace/app/segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>) {
+  digest: '467475086'
+}
+ ⨯ Error: Could not find the module "/Users/aaravkhanal/AI-Debate-Council/frontend/node_modules/next/dist/next-devtools/userspace/app/segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>) {
+  digest: '467475086'
+}
+ ⨯ Error: Could not find the module "/Users/aaravkhanal/AI-Debate-Council/frontend/node_modules/next/dist/next-devtools/userspace/app/segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>)
+    at stringify (<anonymous>) {
+  digest: '467475086'
+}
+ ⨯ Error: Could not find the module "/Users/aaravkhanal/AI-Debate-Council/frontend/node_modules/next/dist/next-devtools/userspace/app/segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1900474511'
+}
+ ⨯ Error: Could not find the module "/Users/aaravkhanal/AI-Debate-Council/frontend/node_modules/next/dist/next-devtools/userspace/app/segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1900474511'
+}
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  digest: '1050045646'
+}
+ ⨯ Error: Could not find the module "/Users/aaravkhanal/AI-Debate-Council/frontend/node_modules/next/dist/next-devtools/userspace/app/segment-explorer-node.js#SegmentViewNode" in the React Client Manifest. This is probably a bug in the React Server Components bundler.
+    at stringify (<anonymous>) {
+  digest: '1900474511'
+}
+[TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  page: '/'
+}
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 1668ms (1688 modules)
+ GET / 500 in 4614ms
+[?25h
