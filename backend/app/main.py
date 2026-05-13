@@ -4,17 +4,17 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.analytics import analyze_debate, session_chart_data
-from config import settings
-from database import Database
-from debate import ClientDisconnectedError, DebateError, DebateManager
-from model_registry import (
+from app.config import settings
+from app.database import Database
+from app.debate import ClientDisconnectedError, DebateError, DebateManager
+from app.model_registry import (
     PROVIDER_ORDER,
     SUPPORTED_MODELS,
     available_models,
     verify_models_runtime,
 )
-from runtime_diary import runtime_diary
-from schemas import (
+from app.runtime_diary import runtime_diary
+from app.schemas import (
     ChatSession,
     CouncilSettingsUpdate,
     CreateSessionRequest,
