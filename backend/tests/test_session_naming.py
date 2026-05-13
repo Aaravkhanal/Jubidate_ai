@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from backend.app.database import Database
+from app.database import Database
 
 
 class SessionNamingTests(unittest.TestCase):

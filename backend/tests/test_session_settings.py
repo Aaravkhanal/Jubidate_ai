@@ -3,7 +3,7 @@ import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
 
-from backend.app.database import Database
+from app.database import Database
 
 
 class SessionSettingsTests(unittest.TestCase):
