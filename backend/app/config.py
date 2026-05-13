@@ -7,10 +7,8 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).resolve().parents[2]
 BACKEND_DIR = ROOT_DIR / "backend"
 
-# Root .env overrides shell variables. backend/.env then overrides root .env for
-# backend-specific local setups, matching ENVREADME.md.
-load_dotenv(ROOT_DIR / ".env", override=True)
-load_dotenv(BACKEND_DIR / ".env", override=True)
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv(BACKEND_DIR / ".env")
 
 
 class Settings:
