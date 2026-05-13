@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from analytics import analyze_debate, session_chart_data
+from app.analytics import analyze_debate, session_chart_data
 from config import settings
 from database import Database
 from debate import ClientDisconnectedError, DebateError, DebateManager
