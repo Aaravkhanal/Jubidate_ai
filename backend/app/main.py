@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-
+import os
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -58,6 +58,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+
+@app.get("/debug-env")
+def debug_env():
+    return {
+        "GROQ_API_KEY": bool(os.getenv("GROQ_API_KEY")),
+        "OPENAI_API_KEY": bool(os.getenv("OPENAI_API_KEY")),
+        "OPENROUTER_API_KEY": bool(os.getenv("OPENROUTER_API_KEY")),
+        "GOOGLE_API_KEY": bool(os.getenv("GOOGLE_API_KEY")),
+    }
 
 app.add_middleware(
     CORSMiddleware,
