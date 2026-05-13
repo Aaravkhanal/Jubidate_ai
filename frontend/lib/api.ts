@@ -14,10 +14,11 @@ import type {
 } from "@/types";
 
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ??
+  "http://localhost:8000";
 
 export const WS_BASE =
-  process.env.NEXT_PUBLIC_WS_URL?.replace(/\/$/, "") ??
+  import.meta.env.VITE_WS_BASE_URL?.replace(/\/$/, "") ??
   API_BASE.replace(/^http/, "ws");
 const REQUEST_TIMEOUT_MS = 15000;
 
