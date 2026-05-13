@@ -1,112 +1,415 @@
 <div align="center">
-  <h1>🌌 Jubidate AI</h1>
-  <h3>Multi-Agent Strategic Intelligence Platform</h3>
 
-  <p>
-    <img src="https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=next.js&logoColor=white" alt="Next.js" />
-    <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
-    <img src="https://img.shields.io/badge/Gemini-8E75B2?style=for-the-badge&logo=google&logoColor=white" alt="Gemini" />
-    <img src="https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white" alt="Groq" />
-    <img src="https://img.shields.io/badge/OpenRouter-000000?style=for-the-badge&logo=openrouter&logoColor=white" alt="OpenRouter" />
-    <img src="https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind CSS" />
-    <img src="https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white" alt="Vercel" />
-    <img src="https://img.shields.io/badge/AI_Agents-000000?style=for-the-badge&logo=openai&logoColor=white" alt="AI Agents" />
-    <img src="https://img.shields.io/badge/Voice_AI-FF4F00?style=for-the-badge&logo=google&logoColor=white" alt="Voice AI" />
-  </p>
+# 🌌 Jubidate AI
 
-  <p><b>A futuristic AI strategic operating system for alignment simulations and advanced multi-model orchestration.</b></p>
+### Strategic Intelligence Operating System
+
+<p align="center">
+  <b>Multi-Agent AI Alignment • Strategic Simulations • Voice Intelligence • Real-Time Orchestration</b>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js" />
+  <img src="https://img.shields.io/badge/React-19-20232A?style=for-the-badge&logo=react" />
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi" />
+  <img src="https://img.shields.io/badge/Gemini-AI-8E75B2?style=for-the-badge&logo=google" />
+  <img src="https://img.shields.io/badge/Groq-LLM-F55036?style=for-the-badge&logo=groq" />
+  <img src="https://img.shields.io/badge/OpenRouter-000000?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/TailwindCSS-38B2AC?style=for-the-badge&logo=tailwind-css" />
+  <img src="https://img.shields.io/badge/Vercel-Deployed-black?style=for-the-badge&logo=vercel" />
+  <img src="https://img.shields.io/badge/Railway-Backend-7B61FF?style=for-the-badge" />
+</p>
+
+<p>
+A futuristic AI strategic operating system where multiple intelligent agents collaborate, debate, analyze, challenge, and synthesize strategic outcomes in real time.
+</p>
+
 </div>
 
 ---
 
-## 📖 Overview
+# 🌐 Live Deployment
 
-Jubidate AI is a production-grade, multi-agent orchestration platform that brings advanced Strategic Intelligence to life. Moving beyond simple AI chats, Jubidate AI runs **Alignment Simulations** where multiple specialized AI models collaborate, synthesize, and reason through complex objectives in real-time. 
+## Frontend (Vercel)
 
-With full support for **high-fidelity Speech-to-Text (STT) and Text-to-Speech (TTS)**, Jubidate AI acts as a cinematic AI command center, delivering hands-free strategic orchestration.
+https://jubidate-ai.vercel.app
 
-## ✨ Features
+## Backend API (Railway)
 
-- **Multi-Agent Orchestration**: Spin up clusters of specialized AI roles (Researchers, Advocates, Critics, Judges) running concurrently on different LLMs.
-- **Voice Interaction (TTS & STT)**: Real-time, provider-agnostic voice engine utilizing Google Cloud's premium generative voice models. Connect with agents via full-duplex speech-to-speech interaction.
-- **Strategic Intelligence System**: Automatically audits logical consistency, generates strategic flowcharts, and provides actionable intelligence from every reasoning layer.
-- **Alignment Simulations**: Run both Autonomous (AI vs AI) and Human-in-the-loop (Human vs AI) alignment simulations to explore strategic solutions.
-- **Real-Time AI Reasoning**: Watch agent reasoning streams live via WebSocket data streaming.
+https://jubidateai-production.up.railway.app
 
-## 🏗 Architecture
+## Swagger API Docs
 
-Jubidate AI is built on a split architecture ensuring rapid inference and optimal UI performance.
+https://jubidateai-production.up.railway.app/docs
 
-- **Frontend**: Next.js 15 (App Router), React 19, Tailwind CSS, Framer Motion for cinematic micro-animations.
-- **Backend**: FastAPI (Python), utilizing LiteLLM for routing requests to 100+ different AI models.
-- **Communication**: Full-duplex WebSocket architecture for streaming tokens and binary audio chunks simultaneously.
-- **Storage**: Local SQLite via SQLAlchemy (Zero external DB dependencies).
+---
 
-## 🧠 Multi-Agent Orchestration & Strategy Nodes
+# 📖 Overview
 
-Instead of a single LLM trying to solve a problem, Jubidate AI uses a graph of **Strategy Nodes**.
-1. **Advocates**: Frame the strategic narrative.
-2. **Researchers**: Pull real-time data and evidence.
-3. **Critics**: Pressure-test hypotheses to find logical flaws.
-4. **Examiners**: Cross-examine data sources for validity.
-5. **System Auditor (Judge)**: Synthesizes the final strategic objective and scores the reasoning layer.
+Jubidate AI is a next-generation multi-agent strategic intelligence platform designed to move beyond traditional AI chat interfaces.
 
-## 🎙 Voice Interaction (Speech-to-Speech)
+Instead of relying on a single LLM response, Jubidate AI creates a coordinated ecosystem of AI strategy nodes that:
 
-We have deeply integrated Google's **Text-to-Speech (TTS) and Speech-to-Text (STT)** APIs directly into the Strategic OS. 
-- You can communicate with the command center entirely hands-free.
-- High-fidelity voice responses ensure natural cadence and intonation from the Strategy Nodes.
+* reason independently,
+* challenge each other,
+* analyze weaknesses,
+* synthesize conclusions,
+* and generate strategic intelligence outputs.
 
-## 🔌 AI Providers Integrated
+The system acts like an AI command center capable of:
 
-- **Google Gemini**: Native integration for multimodal reasoning and STT/TTS.
-- **Llama via Groq**: For ultra-fast, low-latency conversational reasoning.
-- **MiniMax**: Advanced alignment and contextual analysis.
-- **Kimi via Fireworks**: Rapid strategy generation.
-- **OpenRouter**: Access to the entire open-source ecosystem (DeepSeek, Llama-3, etc).
+* AI vs AI alignment simulations,
+* Human + AI strategic collaboration,
+* live reasoning orchestration,
+* voice-based interaction,
+* and dynamic strategic analysis.
 
-## 🚀 Deployment
+---
 
-The project is deployment-ready with no hardcoded localhost dependencies.
+# ✨ Core Features
 
-### Environment Setup
-Copy `.env.example` to `.env` and fill in your keys:
+## 🧠 Multi-Agent Strategic Intelligence
+
+Run multiple specialized AI agents simultaneously:
+
+* Strategists
+* Researchers
+* Critics
+* Examiners
+* Judges
+* Auditors
+
+Each agent contributes independently to produce higher-quality strategic reasoning.
+
+---
+
+## ⚡ Real-Time AI Reasoning
+
+* Live streaming responses
+* WebSocket-based architecture
+* Real-time orchestration pipeline
+* Simultaneous multi-model execution
+
+---
+
+## 🎙 Voice AI Integration
+
+Integrated support for:
+
+* Speech-to-Text (STT)
+* Text-to-Speech (TTS)
+* Full-duplex conversational interaction
+
+Powered using modern generative voice systems.
+
+---
+
+## 🧩 Alignment Simulations
+
+### Autonomous Alignment Simulation
+
+AI systems independently debate and synthesize conclusions.
+
+### Human-AI Alignment Simulation
+
+Users collaborate directly with strategic AI agents while the system evaluates logic, consistency, and strategic viability.
+
+---
+
+## 📊 Strategic Intelligence Layer
+
+Jubidate AI generates:
+
+* strategic summaries,
+* reasoning maps,
+* logic evaluations,
+* inference chains,
+* cognitive flow analysis,
+* and performance matrices.
+
+---
+
+## 🛰 Runtime Intelligence Logging
+
+The platform records:
+
+* strategic outcomes,
+* runtime intelligence,
+* agent experiences,
+* and memory traces
+
+to continuously improve future strategic simulations.
+
+---
+
+# 🏗 System Architecture
+
+## Frontend
+
+* Next.js 15
+* React 19
+* TypeScript
+* Tailwind CSS
+* Framer Motion
+
+## Backend
+
+* FastAPI
+* Python
+* LiteLLM
+* WebSockets
+
+## Database
+
+* SQLite
+
+## Deployment
+
+* Vercel (Frontend)
+* Railway (Backend)
+
+---
+
+# 🔌 AI Providers Supported
+
+## Google Gemini
+
+* Multimodal reasoning
+* Voice integration
+* Strategic synthesis
+
+## Groq
+
+Ultra-fast inference and low-latency reasoning.
+
+## OpenRouter
+
+Access to open-source ecosystem models:
+
+* DeepSeek
+* Llama
+* Mixtral
+* Qwen
+* and more
+
+## MiniMax
+
+Advanced contextual analysis and orchestration.
+
+## Fireworks AI
+
+High-performance reasoning pipelines.
+
+---
+
+# 🧠 Strategic Node System
+
+Instead of a single chatbot, Jubidate AI operates through strategic node collaboration.
+
+## Strategy Nodes
+
+### Advocates
+
+Construct strategic narratives and arguments.
+
+### Researchers
+
+Gather evidence and intelligence.
+
+### Critics
+
+Pressure-test ideas and identify flaws.
+
+### Examiners
+
+Cross-analyze logical consistency.
+
+### Judges
+
+Synthesize conclusions and generate verdicts.
+
+### Auditors
+
+Evaluate reasoning quality and inference integrity.
+
+---
+
+# 🚀 Local Development Setup
+
+## 1. Clone Repository
+
+```bash
+git clone https://github.com/your-username/jubidate-ai.git
+cd jubidate-ai
+```
+
+---
+
+## 2. Create Environment File
+
 ```bash
 cp .env.example .env
 ```
 
-### Run Locally (Development)
-Ensure you have `python` and `Node.js` installed.
+Add your API keys:
+
+* GEMINI_API_KEY
+* OPENROUTER_API_KEY
+* GROQ_API_KEY
+* FIREWORKS_API_KEY
+* etc.
+
+---
+
+## 3. Install Backend
+
 ```bash
 python -m venv .venv
-source .venv/bin/activate
-pip install -r backend/requirements.txt
-npm install --prefix frontend
 
-# Start the cinematic OS (Frontend & Backend simultaneously)
+source .venv/bin/activate
+
+pip install -r backend/requirements.txt
+```
+
+---
+
+## 4. Install Frontend
+
+```bash
+npm install --prefix frontend
+```
+
+---
+
+## 5. Run Development Server
+
+```bash
 python dev.py
 ```
 
-### Production Build
-```bash
-# Build the Next.js static assets
-npm run build --prefix frontend
+---
 
-# Start production server
-uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+# 🖥 Production Deployment
+
+## Frontend Deployment (Vercel)
+
+```bash
+npm run build --prefix frontend
 ```
 
-## 🔒 Security
+---
 
-- **API Keys**: All LLM and Cloud API keys are securely managed entirely on the backend server side. 
-- **Secret Management**: Verified `.gitignore` ensures zero accidental credential leakage.
-- **No External Dependencies**: Database is completely local, ensuring maximum privacy for enterprise strategies.
+## Backend Deployment (Railway)
 
-## 🔮 Future Scope
+Start Command:
 
-- **Continuous Strategy Loops**: Agents that stay active for days to monitor changing world conditions.
-- **Multimodal Strategic Nodes**: Incorporating visual and document analysis directly into the alignment simulations.
-- **Enterprise SSO**: SAML and generic SSO integration for secure corporate strategy centers.
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
 ---
-*Built with precision for the future of AI Strategic Analysis.*
+
+# 🔐 Security
+
+* API keys stored securely on backend
+* No secrets exposed to frontend
+* Environment variable isolation
+* SQLite local persistence
+* CORS protected backend architecture
+
+---
+
+# 📡 API Endpoints
+
+## Health Check
+
+```http
+GET /health
+```
+
+## Models
+
+```http
+GET /api/models
+```
+
+## Sessions
+
+```http
+GET /api/sessions
+POST /api/sessions
+```
+
+## Debate WebSocket
+
+```http
+/ws/debates/{session_id}
+```
+
+---
+
+# 🎯 Future Roadmap
+
+* Persistent autonomous strategy loops
+* Long-term AI memory systems
+* Multimodal document analysis
+* Visual intelligence nodes
+* Enterprise SSO
+* Distributed AI orchestration
+* Team collaboration workspaces
+* Real-time strategic dashboards
+
+---
+
+# 🧪 Technology Stack
+
+| Layer      | Technology       |
+| ---------- | ---------------- |
+| Frontend   | Next.js 15       |
+| Backend    | FastAPI          |
+| Styling    | Tailwind CSS     |
+| Animation  | Framer Motion    |
+| Database   | SQLite           |
+| Realtime   | WebSockets       |
+| AI Routing | LiteLLM          |
+| Deployment | Vercel + Railway |
+
+---
+
+# 📸 Platform Highlights
+
+* Multi-Agent AI Simulation
+* Strategic Reasoning Engine
+* Voice-Based AI Interaction
+* Runtime Intelligence Tracking
+* Real-Time WebSocket Streaming
+* Alignment Intelligence System
+* Cognitive Strategy Mapping
+
+---
+
+# 🤝 Contributing
+
+Contributions, ideas, and strategic improvements are welcome.
+
+```bash
+fork → branch → commit → pull request
+```
+
+---
+
+# 📜 License
+
+MIT License
+
+---
+
+<div align="center">
+
+## 🌌 Jubidate AI
+
+### The Future of Strategic Intelligence Systems
+
+Built for next-generation AI orchestration and alignment simulations.
+
+</div>
