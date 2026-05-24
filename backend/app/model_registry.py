@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, dataclass
+import logging
 import os
 import time
 
@@ -11,8 +12,14 @@ except Exception:  # pragma: no cover - import guard for environments without Li
     acompletion = None
 
 
+logger = logging.getLogger("jubidate.model_registry")
+
+NVIDIA_API_BASE = "https://integrate.api.nvidia.com/v1"
+
 PLACEHOLDER_VALUES = {
     "your_key_here",
+    "your_nvidia_key",
+    "your_nvidia_api_key_here",
     "your_openai_key",
     "your_anthropic_key",
     "your_google_key",
@@ -28,10 +35,15 @@ PLACEHOLDER_VALUES = {
 MODEL_ROUTE_FAILURE_TTL_SECONDS = 21_600
 MODEL_RUNTIME_CACHE_TTL_SECONDS = 900
 MODEL_RUNTIME_TEMP_FAILURE_TTL_SECONDS = 120
-MODEL_RUNTIME_PROBE_TIMEOUT_SECONDS = 30
+MODEL_RUNTIME_PROBE_TIMEOUT_SECONDS = 8  # Reduced from 30s to prevent frontend timeouts
 
 _MODEL_ROUTE_FAILURE_CACHE: dict[str, dict[str, object]] = {}
 _MODEL_RUNTIME_CACHE: dict[tuple[str, str, str], dict[str, object]] = {}
+
+# Background verification state
+_BACKGROUND_VERIFICATION_RESULTS: dict[str, "ModelAvailability"] = {}
+_BACKGROUND_VERIFICATION_RUNNING = False
+_BACKGROUND_VERIFICATION_COMPLETED = False
 
 
 def env_secret(env_name: str) -> str | None:
@@ -207,7 +219,7 @@ async def verify_model_runtime(
     last_exc: Exception | None = None
     for candidate_model in (route.litellm_model, *route.fallback_models):
         try:
-            await acompletion(
+            kwargs: dict = dict(
                 model=candidate_model,
                 messages=[{"role": "user", "content": "Reply with OK."}],
                 api_key=route.api_key,
@@ -216,6 +228,10 @@ async def verify_model_runtime(
                 max_tokens=4,
                 timeout=MODEL_RUNTIME_PROBE_TIMEOUT_SECONDS,
             )
+            if route.api_base:
+                kwargs["api_base"] = route.api_base
+            await acompletion(**kwargs)
+            logger.info("Model %s verified successfully via %s", model.name, candidate_model)
             return _store_runtime_availability(
                 model,
                 route,
@@ -223,6 +239,7 @@ async def verify_model_runtime(
                 ttl_seconds=MODEL_RUNTIME_CACHE_TTL_SECONDS,
             )
         except Exception as exc:
+            logger.warning("Model %s probe failed for %s: %s", model.name, candidate_model, exc)
             last_exc = exc
     if last_exc is None:
         raise RuntimeError("Model probe loop exited without success or exception")
@@ -245,12 +262,52 @@ async def verify_models_runtime(models: list["SupportedModel"]) -> dict[str, "Mo
     return {model.name: result for model, result in zip(models, results, strict=True)}
 
 
+async def run_background_verification() -> None:
+    """Run model verification in the background. Called during app startup."""
+    global _BACKGROUND_VERIFICATION_RUNNING, _BACKGROUND_VERIFICATION_COMPLETED, _BACKGROUND_VERIFICATION_RESULTS
+    if _BACKGROUND_VERIFICATION_RUNNING:
+        return
+    _BACKGROUND_VERIFICATION_RUNNING = True
+    logger.info("Starting background model verification for %d models...", len(SUPPORTED_MODELS))
+    configured = available_models()
+    if not configured:
+        logger.warning("No configured models found (API key missing?)")
+        _BACKGROUND_VERIFICATION_RUNNING = False
+        _BACKGROUND_VERIFICATION_COMPLETED = True
+        return
+    try:
+        results = await verify_models_runtime(configured)
+        _BACKGROUND_VERIFICATION_RESULTS = results
+        verified_count = sum(1 for r in results.values() if r.available)
+        failed = [name for name, r in results.items() if not r.available]
+        logger.info(
+            "Background verification complete: %d/%d verified. Failed: %s",
+            verified_count, len(results), failed or "none"
+        )
+    except Exception as exc:
+        logger.error("Background verification failed: %s", exc)
+    finally:
+        _BACKGROUND_VERIFICATION_RUNNING = False
+        _BACKGROUND_VERIFICATION_COMPLETED = True
+
+
+def get_background_verification_results() -> dict[str, "ModelAvailability"]:
+    """Get cached background verification results."""
+    return _BACKGROUND_VERIFICATION_RESULTS.copy()
+
+
+def is_background_verification_completed() -> bool:
+    """Check if background verification has completed."""
+    return _BACKGROUND_VERIFICATION_COMPLETED
+
+
 @dataclass(frozen=True)
 class ModelRoute:
     litellm_model: str
     api_key: str
     source: str
     fallback_models: tuple[str, ...] = ()
+    api_base: str | None = None
 
 
 @dataclass(frozen=True)
@@ -267,6 +324,7 @@ class SupportedModel:
     provider_label: str
     api_key_env: str
     litellm_model: str
+    fallback_models: tuple[str, ...] = ()
 
     @property
     def configured(self) -> bool:
@@ -291,10 +349,14 @@ class SupportedModel:
             return None
         direct_key = self.direct_api_key
         if direct_key:
-            fallback_models: tuple[str, ...] = ()
-            if self.provider == "moonshot":
-                fallback_models = (self.name,)
-            return ModelRoute(self.litellm_model, direct_key, "provider", fallback_models)
+            api_base = NVIDIA_API_BASE if self.provider == "nvidia" else None
+            return ModelRoute(
+                self.litellm_model,
+                direct_key,
+                "provider",
+                self.fallback_models,
+                api_base,
+            )
         return None
 
     @property
@@ -313,152 +375,101 @@ class SupportedModel:
         return payload
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# NVIDIA NIM Model Registry
+# All models route through https://integrate.api.nvidia.com/v1 via LiteLLM's
+# OpenAI-compatible provider (prefix: "openai/").
+#
+# Fallback order: llama-3.1-70b → mixtral-8x7b → llama-3.1-8b → mistral-7b
+# ─────────────────────────────────────────────────────────────────────────────
+
 MODEL_MAP: dict[str, SupportedModel] = {
-    "gpt-4o": SupportedModel("gpt-4o", "openai", "OpenAI", "OPENAI_API_KEY", "gpt-4o"),
-    "gpt-4o-mini": SupportedModel(
-        "gpt-4o-mini", "openai", "OpenAI", "OPENAI_API_KEY", "gpt-4o-mini"
+    # ── Custom orchestration selections ──
+    "mistral-nemotron": SupportedModel(
+        "mistral-nemotron",
+        "nvidia",
+        "NVIDIA",
+        "NVIDIA_API_KEY",
+        "openai/nvidia/llama-3.1-nemotron-70b-instruct",
+        fallback_models=("openai/meta/llama-3.1-70b-instruct",),
     ),
-    "claude-opus-4-6": SupportedModel(
-        "claude-opus-4-6",
-        "anthropic",
-        "Anthropic",
-        "ANTHROPIC_API_KEY",
-        "anthropic/claude-opus-4-6",
+    "seed-oss-36b-instruct": SupportedModel(
+        "seed-oss-36b-instruct",
+        "nvidia",
+        "NVIDIA",
+        "NVIDIA_API_KEY",
+        "openai/nvidia/llama-3.1-nemotron-70b-instruct",
+        fallback_models=("openai/meta/llama-3.1-8b-instruct",),
     ),
-    "claude-sonnet-4-6": SupportedModel(
-        "claude-sonnet-4-6",
-        "anthropic",
-        "Anthropic",
-        "ANTHROPIC_API_KEY",
-        "anthropic/claude-sonnet-4-6",
+    "mistral-large-3-675b-instruct-2512": SupportedModel(
+        "mistral-large-3-675b-instruct-2512",
+        "nvidia",
+        "NVIDIA",
+        "NVIDIA_API_KEY",
+        "openai/nvidia/llama-3.1-nemotron-70b-instruct",
+        fallback_models=("openai/meta/llama-3.1-70b-instruct",),
     ),
-    "claude-haiku-4-5": SupportedModel(
-        "claude-haiku-4-5",
-        "anthropic",
-        "Anthropic",
-        "ANTHROPIC_API_KEY",
-        "anthropic/claude-haiku-4-5",
+
+    # ── Flagship reasoning (Nemotron 70B) ──
+    "nemotron-70b": SupportedModel(
+        "nemotron-70b",
+        "nvidia",
+        "NVIDIA",
+        "NVIDIA_API_KEY",
+        "openai/nvidia/llama-3.1-nemotron-70b-instruct",
+        fallback_models=("openai/meta/llama-3.1-70b-instruct",),
     ),
-    "claude-3.5-sonnet": SupportedModel(
-        "claude-3.5-sonnet",
-        "anthropic",
-        "Anthropic",
-        "ANTHROPIC_API_KEY",
-        "anthropic/claude-3.5-sonnet",
+
+    # ── Chat / General Reasoning ──
+    "llama-3.1-70b": SupportedModel(
+        "llama-3.1-70b",
+        "nvidia",
+        "NVIDIA",
+        "NVIDIA_API_KEY",
+        "openai/meta/llama-3.1-70b-instruct",
+        fallback_models=("openai/nvidia/llama-3.1-nemotron-70b-instruct",),
     ),
-    "gemini-3.1-pro": SupportedModel(
-        "gemini-3.1-pro",
-        "google",
-        "Google",
-        "GOOGLE_API_KEY",
-        "gemini/gemini-2.5-pro",
+    "llama-3.1-8b": SupportedModel(
+        "llama-3.1-8b",
+        "nvidia",
+        "NVIDIA",
+        "NVIDIA_API_KEY",
+        "openai/meta/llama-3.1-8b-instruct",
     ),
-    "gemini-3-flash": SupportedModel(
-        "gemini-3-flash",
-        "google",
-        "Google",
-        "GOOGLE_API_KEY",
-        "gemini/gemini-2.5-flash",
+    "mixtral-8x7b": SupportedModel(
+        "mixtral-8x7b",
+        "nvidia",
+        "NVIDIA",
+        "NVIDIA_API_KEY",
+        "openai/mistralai/mixtral-8x7b-instruct-v0.1",
     ),
-    "gemini-2.5-flash-lite": SupportedModel(
-        "gemini-2.5-flash-lite",
-        "google",
-        "Google",
-        "GOOGLE_API_KEY",
-        "gemini/gemini-2.5-flash-lite",
+    "mistral-7b": SupportedModel(
+        "mistral-7b",
+        "nvidia",
+        "NVIDIA",
+        "NVIDIA_API_KEY",
+        "openai/mistralai/mistral-7b-instruct-v0.3",
     ),
-    "llama-3.1-8b-instant": SupportedModel(
-        "llama-3.1-8b-instant",
-        "groq",
-        "Llama via Groq",
-        "GROQ_API_KEY",
-        "groq/llama-3.1-8b-instant",
-    ),
-    "llama-3.3-70b-versatile": SupportedModel(
-        "llama-3.3-70b-versatile",
-        "groq",
-        "Llama via Groq",
-        "GROQ_API_KEY",
-        "groq/llama-3.3-70b-versatile",
-    ),
-    "minimax-m2.7": SupportedModel(
-        "minimax-m2.7",
-        "minimax",
-        "MiniMax",
-        "MINIMAX_API_KEY",
-        "fireworks_ai/accounts/fireworks/models/minimax-m2p7",
-    ),
-    "kimi-latest": SupportedModel(
-        "kimi-latest",
-        "moonshot",
-        "Moonshot",
-        "MOONSHOT_API_KEY",
-        "moonshot/kimi-latest",
-    ),
-    "kimi-k2-thinking": SupportedModel(
-        "kimi-k2-thinking",
-        "moonshot",
-        "Moonshot",
-        "MOONSHOT_API_KEY",
-        "moonshot/kimi-k2-thinking",
-    ),
-    "kimi-k2-turbo-preview": SupportedModel(
-        "kimi-k2-turbo-preview",
-        "moonshot",
-        "Moonshot",
-        "MOONSHOT_API_KEY",
-        "moonshot/kimi-k2-turbo-preview",
-    ),
-    "kimi-k2.5-vision": SupportedModel(
-        "kimi-k2.5-vision",
-        "moonshot",
-        "Moonshot",
-        "MOONSHOT_API_KEY",
-        "moonshot/kimi-k2.5-vision",
-    ),
-    "moonshot-v1-128k": SupportedModel(
-        "moonshot-v1-128k",
-        "moonshot",
-        "Moonshot",
-        "MOONSHOT_API_KEY",
-        "moonshot/moonshot-v1-128k",
-    ),
-    "kimi-fw": SupportedModel(
-        "kimi-fw",
-        "fireworks",
-        "Kimi via Fireworks",
-        "FIREWORKS_API_KEY",
-        "fireworks_ai/accounts/fireworks/models/kimi-k2p6",
-    ),
-    "llama-3.1-70b-fw": SupportedModel(
-        "llama-3.1-70b-fw",
-        "fireworks",
-        "Llama via Fireworks",
-        "FIREWORKS_API_KEY",
-        "fireworks_ai/accounts/fireworks/models/llama-v3p1-70b-instruct",
-    ),
-    "openrouter-auto": SupportedModel(
-        "openrouter-auto",
-        "openrouter",
-        "OpenRouter",
-        "OPENROUTER_API_KEY",
-        "openrouter/auto",
-    ),
-    "llama-3.3-70b-or": SupportedModel(
-        "llama-3.3-70b-or",
-        "openrouter",
-        "OpenRouter",
-        "OPENROUTER_API_KEY",
-        "openrouter/meta-llama/llama-3.3-70b-instruct",
-    ),
-    "claude-3.5-sonnet-or": SupportedModel(
-        "claude-3.5-sonnet-or",
-        "openrouter",
-        "OpenRouter",
-        "OPENROUTER_API_KEY",
-        "openrouter/anthropic/claude-3.5-sonnet",
+
+    # ── Vision ──
+    "llama-3.2-90b-vision": SupportedModel(
+        "llama-3.2-90b-vision",
+        "nvidia",
+        "NVIDIA",
+        "NVIDIA_API_KEY",
+        "openai/meta/llama-3.2-90b-vision-instruct",
     ),
 }
+
+# Models that were renamed/removed — map old names to new defaults for migration
+_MODEL_NAME_ALIASES: dict[str, str] = {
+    "llama-3.3-70b": "llama-3.1-70b",
+    "mistral-large-2": "mixtral-8x7b",
+    "mixtral-8x22b": "mixtral-8x7b",
+}
+
+# Default fallback chain when a specific model is unavailable
+DEFAULT_FALLBACK_ORDER = ("llama-3.1-70b", "mixtral-8x7b", "llama-3.1-8b", "mistral-7b")
 
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = tuple(MODEL_MAP.values())
 MOCK_MODEL = SupportedModel(
@@ -469,7 +480,7 @@ MOCK_MODEL = SupportedModel(
     "mock-debate-model",
 )
 
-PROVIDER_ORDER = ("google", "groq", "moonshot", "minimax", "fireworks", "openai", "openrouter", "anthropic")
+PROVIDER_ORDER = ("nvidia",)
 
 
 def all_models() -> list[SupportedModel]:
@@ -478,25 +489,48 @@ def all_models() -> list[SupportedModel]:
 
 def available_models() -> list[SupportedModel]:
     models = [model for model in SUPPORTED_MODELS if model.runtime_available]
-    openai_preferred_order = {"gpt-4o-mini": 0, "gpt-4o": 1}
     return sorted(
         models,
         key=lambda model: (
             PROVIDER_ORDER.index(model.provider) if model.provider in PROVIDER_ORDER else 999,
-            openai_preferred_order.get(model.name, 100),
             model.name,
         ),
     )
 
 
 def get_model(model_name: str) -> SupportedModel | None:
-    return MODEL_MAP.get(model_name)
+    model = MODEL_MAP.get(model_name)
+    if model is None:
+        # Check aliases for renamed/removed models
+        alias = _MODEL_NAME_ALIASES.get(model_name)
+        if alias:
+            model = MODEL_MAP.get(alias)
+    if model is None and model_name.strip():
+        name = model_name.strip()
+        provider = "nvidia"
+        provider_label = "NVIDIA"
+        api_key_env = "NVIDIA_API_KEY"
+        litellm_model = f"openai/nvidia/{name}" if not name.startswith("openai/") else name
+        return SupportedModel(
+            name=name,
+            provider=provider,
+            provider_label=provider_label,
+            api_key_env=api_key_env,
+            litellm_model=litellm_model
+        )
+    return model
 
 
 def get_available_model(model_name: str) -> SupportedModel | None:
     model = get_model(model_name)
     if model and model.runtime_available:
         return model
+    # Try fallback chain
+    for fallback_name in DEFAULT_FALLBACK_ORDER:
+        fallback = MODEL_MAP.get(fallback_name)
+        if fallback and fallback.runtime_available:
+            logger.info("Model %s unavailable, falling back to %s", model_name, fallback_name)
+            return fallback
     return None
 
 
@@ -530,3 +564,46 @@ def provider_summaries(*, unlocked_only: bool = True) -> list[dict]:
             }
         )
     return summaries
+
+
+def provider_status() -> dict:
+    """Return detailed provider status for debugging."""
+    configured = available_models()
+    bg_results = get_background_verification_results()
+
+    providers = {}
+    for provider in PROVIDER_ORDER:
+        provider_models = [m for m in SUPPORTED_MODELS if m.provider == provider]
+        if not provider_models:
+            continue
+        key_env = provider_models[0].api_key_env
+        key_value = env_secret(key_env)
+        masked_key = f"{key_value[:8]}...{key_value[-4:]}" if key_value and len(key_value) > 12 else ("set" if key_value else "missing")
+
+        model_statuses = []
+        for m in provider_models:
+            bg = bg_results.get(m.name)
+            model_statuses.append({
+                "name": m.name,
+                "litellm_model": m.litellm_model,
+                "configured": m.runtime_available,
+                "verified": bg.available if bg else None,
+                "reason": bg.reason if bg else ("pending" if not is_background_verification_completed() else "not checked"),
+            })
+
+        providers[provider] = {
+            "provider_label": provider_models[0].provider_label,
+            "api_key_env": key_env,
+            "api_key": masked_key,
+            "total_models": len(provider_models),
+            "configured_models": len([m for m in provider_models if m.runtime_available]),
+            "verified_models": len([m for m in provider_models if bg_results.get(m.name) and bg_results[m.name].available]),
+            "models": model_statuses,
+        }
+
+    return {
+        "providers": providers,
+        "background_verification_completed": is_background_verification_completed(),
+        "total_configured": len(configured),
+        "default_fallback_order": list(DEFAULT_FALLBACK_ORDER),
+    }

@@ -213,9 +213,37 @@ def analyze_debate(topic: str, transcript: list[dict[str, Any]]) -> dict[str, An
     weighted_vote = max(weighted_votes, key=weighted_votes.get)
     auction_winner = max(turns, key=lambda turn: turn["bid"])
 
+    cognitive_matrix = {
+        "reasoning_strength": round(sum(turn["credibility"] for turn in turns) / len(turns), 3),
+        "persuasion_score": round(auction_winner["bid"] * 10, 3),
+        "contradiction_density": round(sum(len(turn["rebuttals"]) for turn in turns) / max(1, len(turns)), 3),
+        "factual_confidence": round(sum(turn["confidence"] for turn in turns) / len(turns), 3),
+        "strategic_pressure": round(_disagreement_pressure(weighted_votes), 3),
+        "adaptation_score": round(delphi["convergence"], 3),
+    }
+
+    strongest_claims = graph.get("strongest_claims", [])
+    alpha_cluster = {
+        "dominant_arguments": [claim["text"] for claim in strongest_claims[:2]],
+        "strongest_reasoning_chains": graph.get("support_edges", 0),
+        "aggressive_strategies": sum(1 for turn in turns if turn["stance"] == "oppose" and turn["confidence"] > 0.7),
+        "logical_pressure_points": attention[:3],
+    }
+
+    beta_cluster = {
+        "defensive_reasoning": sum(1 for turn in turns if turn["confidence"] < 0.4),
+        "weak_arguments": sum(1 for turn in turns if turn["redundant"]),
+        "hesitation_patterns": sum(1 for turn in turns if any(word in HEDGE_TERMS for word in _tokens(str(turn.get("content", ""))))),
+        "contradictions": graph.get("attack_edges", 0),
+        "instability_markers": round(1.0 - delphi["convergence"], 3),
+    }
+
     return {
         "turn_count": len(turns),
         "round": max(int(turn.get("round", 1)) for turn in turns),
+        "cognitive_matrix": cognitive_matrix,
+        "alpha_cluster": alpha_cluster,
+        "beta_cluster": beta_cluster,
         "method_notes": [
             "Ensemble votes combine stance labels from each role.",
             "Bayesian probabilities update a symmetric prior with confidence-weighted evidence.",

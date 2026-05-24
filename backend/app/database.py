@@ -215,6 +215,10 @@ class Database:
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     mode TEXT NOT NULL DEFAULT 'ai_vs_ai',
+                    ai_a_model TEXT NOT NULL DEFAULT '',
+                    ai_b_model TEXT NOT NULL DEFAULT '',
+                    judge_model TEXT NOT NULL DEFAULT '',
+                    rounds INTEGER NOT NULL DEFAULT 2,
                     default_index INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -405,6 +409,22 @@ class Database:
         if "mode" not in columns:
             connection.execute(
                 "ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'ai_vs_ai'"
+            )
+        if "ai_a_model" not in columns:
+            connection.execute(
+                "ALTER TABLE sessions ADD COLUMN ai_a_model TEXT NOT NULL DEFAULT ''"
+            )
+        if "ai_b_model" not in columns:
+            connection.execute(
+                "ALTER TABLE sessions ADD COLUMN ai_b_model TEXT NOT NULL DEFAULT ''"
+            )
+        if "judge_model" not in columns:
+            connection.execute(
+                "ALTER TABLE sessions ADD COLUMN judge_model TEXT NOT NULL DEFAULT ''"
+            )
+        if "rounds" not in columns:
+            connection.execute(
+                "ALTER TABLE sessions ADD COLUMN rounds INTEGER NOT NULL DEFAULT 2"
             )
 
     def _ensure_settings_schema(self, connection: sqlite3.Connection) -> None:
@@ -785,6 +805,10 @@ class Database:
         max_sessions: int,
         *,
         mode: str = "ai_vs_ai",
+        ai_a_model: str = "",
+        ai_b_model: str = "",
+        judge_model: str = "",
+        rounds: int = 2,
         settings_updates: dict | None = None,
     ) -> dict:
         cleaned_mode = mode if mode in CHAT_MODES else "ai_vs_ai"
@@ -793,7 +817,16 @@ class Database:
                 "SELECT COUNT(*) AS total FROM sessions"
             ).fetchone()["total"]
             if session_count >= max_sessions:
-                raise ValueError("SESSION_LIMIT")
+                to_delete_count = session_count - max_sessions + 1
+                oldest_sessions = connection.execute(
+                    "SELECT id FROM sessions ORDER BY updated_at ASC LIMIT ?",
+                    (to_delete_count,)
+                ).fetchall()
+                for old in oldest_sessions:
+                    connection.execute("DELETE FROM sessions WHERE id = ?", (old["id"],))
+                session_count = connection.execute(
+                    "SELECT COUNT(*) AS total FROM sessions"
+                ).fetchone()["total"]
 
             # Monotonic while any chat exists; reset only after the last chat is deleted.
             if session_count == 0:
@@ -811,8 +844,8 @@ class Database:
             session_id = str(uuid4())
             connection.execute(
                 """
-                INSERT INTO sessions (id, name, mode, default_index, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO sessions (id, name, mode, default_index, created_at, updated_at, ai_a_model, ai_b_model, judge_model, rounds)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -821,6 +854,10 @@ class Database:
                     counter,
                     now,
                     now,
+                    ai_a_model,
+                    ai_b_model,
+                    judge_model,
+                    rounds,
                 ),
             )
             connection.execute(
@@ -1309,6 +1346,50 @@ class Database:
                 (SESSION_COUNTER_KEY,),
             )
             return int(deleted)
+
+    def update_session_models(
+        self,
+        session_id: str,
+        ai_a_model: str | None = None,
+        ai_b_model: str | None = None,
+        judge_model: str | None = None,
+        rounds: int | None = None,
+    ) -> dict | None:
+        with self.lock, self.session(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if not row:
+                return None
+            
+            updates = []
+            params = []
+            if ai_a_model is not None:
+                updates.append("ai_a_model = ?")
+                params.append(ai_a_model)
+            if ai_b_model is not None:
+                updates.append("ai_b_model = ?")
+                params.append(ai_b_model)
+            if judge_model is not None:
+                updates.append("judge_model = ?")
+                params.append(judge_model)
+            if rounds is not None:
+                updates.append("rounds = ?")
+                params.append(rounds)
+                
+            if updates:
+                updates.append("updated_at = ?")
+                params.append(utc_now())
+                params.append(session_id)
+                connection.execute(
+                    f"UPDATE sessions SET {', '.join(updates)} WHERE id = ?",
+                    tuple(params),
+                )
+            
+            row = connection.execute(
+                "SELECT * FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            return row_to_dict(row)
 
     def touch_session(self, session_id: str) -> None:
         with self.lock, self.session() as connection:

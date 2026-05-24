@@ -5,11 +5,11 @@ import unittest
 
 from fastapi import WebSocketDisconnect
 
-from backend.app.costing import CostTracker
-from backend.app.database import Database
-from backend.app.debate import ClientDisconnectedError, DebateManager, StreamingSanitizer
-from backend.app.model_registry import MOCK_MODEL
-from backend.app.runtime_diary import runtime_diary
+from app.costing import CostTracker
+from app.database import Database
+from app.debate import ClientDisconnectedError, DebateManager, StreamingSanitizer
+from app.model_registry import MOCK_MODEL
+from app.runtime_diary import runtime_diary
 
 
 class DebateArchitectureTests(unittest.TestCase):
@@ -204,7 +204,7 @@ class DebateArchitectureTests(unittest.TestCase):
         sliced = self.manager._context_slice(transcript, 6)
 
         self.assertLessEqual(len(sliced), 24)
-        self.assertTrue(all(len(turn["content"]) <= 1203 for turn in sliced))
+        self.assertTrue(all(len(turn["content"]) <= 1603 for turn in sliced))
 
     def test_transcript_for_model_keeps_topic_relevant_turns_even_if_older(self) -> None:
         transcript = [

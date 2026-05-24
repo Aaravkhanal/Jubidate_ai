@@ -14,13 +14,15 @@ import type {
 } from "@/types";
 
 export const API_BASE =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ??
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
+  process.env.NEXT_PUBLIC_VITE_API_BASE_URL?.replace(/\/$/, "") ??
   "http://localhost:8000";
 
 export const WS_BASE =
-  import.meta.env.VITE_WS_BASE_URL?.replace(/\/$/, "") ??
+  process.env.NEXT_PUBLIC_WS_BASE_URL?.replace(/\/$/, "") ??
+  process.env.NEXT_PUBLIC_VITE_WS_BASE_URL?.replace(/\/$/, "") ??
   API_BASE.replace(/^http/, "ws");
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = 30000;
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response;
@@ -264,4 +266,62 @@ function formatApiError(value: unknown): string {
     }
   }
   return String(value || "Request failed.");
+}
+
+
+export function createRESTSession(payload: {
+  mode: string;
+  ai_a_model: string;
+  ai_b_model?: string;
+  judge_model: string;
+  rounds: number;
+}) {
+  return request<ChatSession>("/debate/create", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function startRESTDebate(payload: {
+  session_id: string;
+  topic: string;
+}) {
+  return request<{
+    session: ChatSession;
+    debate: DebateRecord;
+    messages: DebateMessage[];
+  }>("/debate/start", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function nextRESTTurn(payload: {
+  session_id: string;
+  debate_id: string;
+  content?: string;
+}) {
+  return request<{
+    session: ChatSession;
+    debate: DebateRecord;
+    messages: DebateMessage[];
+  }>("/debate/next-turn", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateSessionModels(
+  sessionId: string,
+  payload: {
+    ai_a_model?: string;
+    ai_b_model?: string;
+    judge_model?: string;
+    rounds?: number;
+  }
+) {
+  return request<ChatSession>(`/api/sessions/${sessionId}/models`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
 }

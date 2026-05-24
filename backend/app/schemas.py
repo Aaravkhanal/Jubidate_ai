@@ -5,6 +5,10 @@ class ChatSession(BaseModel):
     id: str
     name: str
     mode: str = "ai_vs_ai"
+    ai_a_model: str = ""
+    ai_b_model: str = ""
+    judge_model: str = ""
+    rounds: int = 2
     default_index: int
     created_at: str
     updated_at: str
@@ -12,6 +16,10 @@ class ChatSession(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     mode: str = Field(default="ai_vs_ai", max_length=32)
+    ai_a_model: str = ""
+    ai_b_model: str = ""
+    judge_model: str = ""
+    rounds: int = 2
     settings: dict | None = None
 
 
@@ -154,3 +162,29 @@ class DebateMessage(BaseModel):
     phase_kind: str | None = None
     sequence: int
     created_at: str
+
+
+class RESTDebateCreateRequest(BaseModel):
+    mode: str
+    ai_a_model: str
+    ai_b_model: str | None = ""
+    judge_model: str
+    rounds: int = 2
+
+
+class RESTDebateStartRequest(BaseModel):
+    session_id: str
+    topic: str
+
+
+class RESTDebateNextTurnRequest(BaseModel):
+    session_id: str
+    debate_id: str
+    content: str | None = None
+
+
+class SessionModelsUpdateRequest(BaseModel):
+    ai_a_model: str | None = None
+    ai_b_model: str | None = None
+    judge_model: str | None = None
+    rounds: int | None = None

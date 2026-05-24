@@ -1,7 +1,7 @@
 import unittest
 import json
 
-from backend.app.analytics import (
+from app.analytics import (
     _delphi_convergence,
     _infer_debate_winner,
     _win_rate_by_team,

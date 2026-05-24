@@ -3,6 +3,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useVoiceSettings, useVoiceSynthesis, useSpeechRecognition } from "@/hooks/useVoice";
+import { DebateContainer } from "./chat/DebateContainer";
+import { LiveModelSwap } from "./orchestration/LiveModelSwap";
+import { CognitiveMatrixPanel } from "./orchestration/CognitiveMatrixPanel";
+import { AlphaClusterPanel } from "./orchestration/AlphaClusterPanel";
+import { BetaClusterPanel } from "./orchestration/BetaClusterPanel";
 
 import type {
   AgentExperienceRecord,
@@ -32,9 +37,14 @@ type DebateRoomProps = {
   status: string;
   error: string | null;
   assignments: DebateAssignment[];
+  currentRound?: number;
+  totalRounds?: number;
+  activeSpeaker?: string;
+  streamingStatus?: string;
   debates: DebateRecord[];
   selectedDebateId: string;
   analytics: DebateAnalytics | null;
+  realtimeAnalytics: any | null;
   analyticsHistory: DebateAnalytics[];
   intelligence: DebateIntelligence | null;
   practiceState: PracticeState | null;
@@ -67,6 +77,8 @@ type DebateRoomProps = {
   onDeleteRequest: (session: ChatSession) => void;
   onDeleteDebateRequest: (session: ChatSession, debate: DebateRecord) => void;
   onClearRequest: (session: ChatSession, mode: "history" | "memory") => void;
+  onNewDebate: () => void;
+  onLiveModelSwap?: (role: "ai_a" | "ai_b" | "judge", model: string) => Promise<boolean>;
 };
 
 const roleStyles: Record<string, string> = {
@@ -153,9 +165,14 @@ export function DebateRoom({
   status,
   error,
   assignments,
+  currentRound = 0,
+  totalRounds = 0,
+  activeSpeaker = "",
+  streamingStatus = "",
   debates,
   selectedDebateId,
   analytics,
+  realtimeAnalytics,
   analyticsHistory,
   intelligence,
   practiceState,
@@ -183,7 +200,9 @@ export function DebateRoom({
   onRenameDebate,
   onDeleteRequest,
   onDeleteDebateRequest,
-  onClearRequest
+  onClearRequest,
+  onNewDebate,
+  onLiveModelSwap
 }: DebateRoomProps) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const partialList = Object.values(partialMessages);
@@ -196,11 +215,13 @@ export function DebateRoom({
     !isRunning &&
     unlockedModels.length > 0;
 
+  const partialsHash = partialList.map((m) => m.content.length).join(",");
+
   useEffect(() => {
     if (settings?.auto_scroll && activePanel === "chat") {
       bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     }
-  }, [messages, partialList.length, settings?.auto_scroll, activePanel]);
+  }, [messages, partialsHash, settings?.auto_scroll, activePanel]);
 
   if (showCouncilSettings) {
     return (
@@ -277,6 +298,77 @@ export function DebateRoom({
         </div>
       </section>
 
+      {((selectedSession.mode === "ai_vs_ai" && isRunning) || (selectedSession.mode === "ai_vs_human" && practiceState?.active)) && (
+        <div 
+          className="px-4 py-3 flex flex-col gap-2 transition-all duration-300 border-b"
+          style={{ 
+            borderColor: 'var(--sm-border)',
+            background: 'linear-gradient(90deg, rgba(99,102,241,0.04), rgba(6,182,212,0.02))'
+          }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+              </div>
+              <span className="text-xs font-bold tracking-wider uppercase" style={{ color: 'var(--sm-text-secondary)' }}>
+                {(selectedSession.mode === "ai_vs_ai" || (selectedSession.mode === "ai_vs_human" && practiceState?.practice_flow === "Structured")) 
+                  ? `Round ${
+                      selectedSession.mode === "ai_vs_human" 
+                        ? (settings?.practice_settings?.structured_rounds || 6) - (practiceState?.rounds_left ?? 0) + 1 
+                        : currentRound || 0
+                    } of ${
+                      selectedSession.mode === "ai_vs_human" 
+                        ? (settings?.practice_settings?.structured_rounds || 6) 
+                        : totalRounds || 0
+                    }` 
+                  : "Free Debate Session"
+                }
+              </span>
+              {activeSpeaker && (
+                <>
+                  <span style={{ color: 'var(--sm-text-tertiary)' }}>•</span>
+                  <span className="text-xs font-bold text-cyan-400">
+                    Active Speaker: {activeSpeaker}
+                  </span>
+                </>
+              )}
+            </div>
+            
+            <div className="flex items-center gap-3">
+              {streamingStatus && (
+                <span className="text-[11px] font-medium italic" style={{ color: 'var(--sm-text-tertiary)' }}>
+                  {streamingStatus}
+                </span>
+              )}
+            </div>
+          </div>
+          
+          {(selectedSession.mode === "ai_vs_ai" || (selectedSession.mode === "ai_vs_human" && practiceState?.practice_flow === "Structured")) && (
+            <div className="w-full rounded-full h-1.5 overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+              <div 
+                className="bg-gradient-to-r from-indigo-500 to-cyan-500 h-1.5 rounded-full transition-all duration-500 ease-out" 
+                style={{ 
+                  width: `${
+                    Math.min(100, Math.max(0, (
+                      (selectedSession.mode === "ai_vs_human" 
+                        ? (settings?.practice_settings?.structured_rounds || 6) - (practiceState?.rounds_left ?? 0) + 1 
+                        : currentRound || 0
+                      ) / (
+                        selectedSession.mode === "ai_vs_human" 
+                          ? (settings?.practice_settings?.structured_rounds || 6) 
+                          : totalRounds || 0
+                      )
+                    ) * 100))
+                  }%` 
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="min-h-0 flex flex-1">
         <aside
           className="group hidden w-12 hover:w-44 shrink-0 overflow-hidden lg:block transition-all duration-300 ease-in-out"
@@ -345,7 +437,7 @@ export function DebateRoom({
             <>
               <section className="min-h-0 flex-1 overflow-y-auto p-4">
                 {isTeamPreparing ? <TeamPreparationNotice /> : null}
-                {assignments.length > 0 ? <AssignmentStrip assignments={assignments} /> : null}
+                {selectedSession.ai_a_model || assignments.length > 0 ? <AssignmentStrip session={selectedSession} assignments={assignments} /> : null}
                 {messages.length === 0 && partialList.length === 0 ? (
                   <div className="mx-auto flex h-full max-w-2xl flex-col justify-center text-center">
                     <p className="font-display text-2xl font-bold sm-gradient-text">
@@ -360,15 +452,11 @@ export function DebateRoom({
                     </p>
                   </div>
                 ) : (
-                  <div className="mx-auto flex max-w-4xl flex-col gap-3">
-                    {messages.map((message) => (
-                      <MessageBubble key={message.id} message={message} settings={settings} />
-                    ))}
-                    {partialList.map((message) => (
-                      <MessageBubble key={message.id} message={message} settings={settings} pending />
-                    ))}
-                    <div ref={bottomRef} />
-                  </div>
+                  <DebateContainer
+                    messages={messages}
+                    partialMessages={partialMessages}
+                    settings={settings}
+                  />
                 )}
               </section>
 
@@ -381,9 +469,14 @@ export function DebateRoom({
                 isRunning={isRunning}
                 canSend={canSend}
                 error={error}
+                hasMessages={messages.length > 0}
                 onTopicChange={onTopicChange}
                 onModelChange={onModelChange}
                 onSend={onSend}
+                onNewDebate={onNewDebate}
+                isRESTSession={Boolean(selectedSession?.ai_a_model)}
+                selectedSession={selectedSession}
+                onLiveModelSwap={onLiveModelSwap}
               />
             </>
           ) : null}
@@ -391,6 +484,8 @@ export function DebateRoom({
           {activePanel === "stats" ? (
             <StatsPanel
               analytics={analytics}
+              realtimeAnalytics={realtimeAnalytics}
+              sessionMode={selectedSession?.mode}
               history={analyticsHistory}
               debates={debates}
               selectedDebateId={selectedDebateId}
@@ -550,7 +645,81 @@ function ProviderReadiness({ models }: { models: ModelsResponse | null }) {
   );
 }
 
-function AssignmentStrip({ assignments }: { assignments: DebateAssignment[] }) {
+function AssignmentStrip({ 
+  session, 
+  assignments 
+}: { 
+  session: ChatSession | null; 
+  assignments: DebateAssignment[] 
+}) {
+  const isRESTSession = Boolean(session?.ai_a_model);
+  
+  if (isRESTSession && session) {
+    const isPractice = session.mode === "ai_vs_human";
+    return (
+      <div className="mx-auto mb-6 grid max-w-4xl gap-3 grid-cols-1 sm:grid-cols-3">
+        {/* Card 1: Pro */}
+        <div 
+          className="sm-card p-4 transition-all duration-300 relative overflow-hidden" 
+          style={{ 
+            borderRadius: 'var(--sm-radius-md)',
+            border: '1px solid rgba(99,102,241,0.2)',
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.05), transparent)'
+          }}
+        >
+          <span className="text-[10px] font-bold tracking-widest uppercase text-indigo-400 block mb-1">PRO TEAM</span>
+          <p className="text-sm font-bold" style={{ color: 'var(--sm-text-primary)' }}>
+            {isPractice ? "Human Operator" : "AI Debater A (Pro)"}
+          </p>
+          <p className="mt-1.5 truncate text-[11px]" style={{ color: 'var(--sm-text-tertiary)' }} title={isPractice ? "Human Stance" : session.ai_a_model}>
+            {isPractice ? "Operator Node" : session.ai_a_model}
+          </p>
+        </div>
+
+        {/* Card 2: Con */}
+        <div 
+          className="sm-card p-4 transition-all duration-300 relative overflow-hidden" 
+          style={{ 
+            borderRadius: 'var(--sm-radius-md)',
+            border: '1px solid rgba(6,182,212,0.2)',
+            background: 'linear-gradient(135deg, rgba(6,182,212,0.05), transparent)'
+          }}
+        >
+          <span className="text-[10px] font-bold tracking-widest uppercase text-cyan-400 block mb-1">CON TEAM</span>
+          <p className="text-sm font-bold" style={{ color: 'var(--sm-text-primary)' }}>
+            {isPractice ? "AI Opponent" : "AI Debater B (Con)"}
+          </p>
+          <p className="mt-1.5 truncate text-[11px]" style={{ color: 'var(--sm-text-tertiary)' }} title={isPractice ? session.ai_a_model : session.ai_b_model}>
+            {isPractice ? session.ai_a_model : session.ai_b_model}
+          </p>
+        </div>
+
+        {/* Card 3: Judge */}
+        <div 
+          className="sm-card p-4 transition-all duration-300 relative overflow-hidden" 
+          style={{ 
+            borderRadius: 'var(--sm-radius-md)',
+            border: '1px solid rgba(245,158,11,0.3)',
+            background: 'linear-gradient(135deg, rgba(245,158,11,0.06), transparent)'
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold tracking-widest uppercase block" style={{ color: 'var(--sm-accent-amber-light)' }}>JUDGE</span>
+            <span className="rounded-md px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              STANDBY
+            </span>
+          </div>
+          <p className="text-sm font-bold mt-1" style={{ color: 'var(--sm-text-primary)' }}>
+            Independent Adjudicator
+          </p>
+          <p className="mt-1.5 truncate text-[11px]" style={{ color: 'var(--sm-text-tertiary)' }} title={session.judge_model}>
+            {session.judge_model}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto mb-4 grid max-w-4xl gap-2 sm:grid-cols-2 xl:grid-cols-5">
       {assignments.map((assignment) => (
@@ -574,9 +743,14 @@ function Composer({
   isRunning,
   canSend,
   error,
+  hasMessages = false,
   onTopicChange,
   onModelChange,
-  onSend
+  onSend,
+  onNewDebate,
+  isRESTSession = false,
+  selectedSession,
+  onLiveModelSwap
 }: {
   models: ModelsResponse | null;
   topic: string;
@@ -586,9 +760,14 @@ function Composer({
   isRunning: boolean;
   canSend: boolean;
   error: string | null;
+  hasMessages?: boolean;
   onTopicChange: (topic: string) => void;
   onModelChange: (modelName: string) => void;
   onSend: () => void;
+  onNewDebate: () => void;
+  isRESTSession?: boolean;
+  selectedSession: ChatSession | null;
+  onLiveModelSwap?: (role: "ai_a" | "ai_b" | "judge", model: string) => Promise<boolean>;
 }) {
   const unlockedModels = models?.models ?? [];
   const charCount = topic.length;
@@ -658,103 +837,134 @@ function Composer({
             {models.availability_notice}
           </p>
         ) : null}
-        <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)] xl:items-start">
-          <div className="space-y-2">
-            <div>
-              <label htmlFor="model" className="mb-2 block text-sm font-medium" style={{ color: 'var(--sm-text-primary)' }}>
-                Overall Model
-              </label>
-              <select
-                id="model"
-                value={selectedModelName}
-                onChange={(event) => onModelChange(event.target.value)}
-                disabled={unlockedModels.length === 0 || isRunning}
-                className="sm-select h-12 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {unlockedModels.length === 0 ? <option value="">No verified models</option> : null}
-                {Object.entries(modelsByProvider).map(([provider, providerModels]) => (
-                  <optgroup key={provider} label={provider}>
-                    {providerModels.map((model) => (
-                      <option key={model.name} value={model.name}>
-                        {model.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+        <div className="grid gap-4 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-start">
+          {isRESTSession ? (
+            <div className="w-full xl:w-[320px] shrink-0">
+              {onLiveModelSwap && (
+                <LiveModelSwap
+                  mode={selectedSession?.mode as any}
+                  aiA={selectedSession?.ai_a_model || ""}
+                  aiB={selectedSession?.ai_b_model || ""}
+                  judge={selectedSession?.judge_model || ""}
+                  models={models}
+                  onSwap={onLiveModelSwap}
+                />
+              )}
             </div>
-            <p className="text-sm leading-6" style={{ color: 'var(--sm-text-tertiary)' }}>
-              {isPractice
-                ? "Alignment mode uses one AI opponent, then Judge and Coach when the session ends."
-                : "The router decides whether this is a normal chat or a strategy simulation."}
-            </p>
-          </div>
-          <div>
+          ) : (
+            <div className="space-y-2 w-full xl:w-[240px] shrink-0">
+              <div>
+                <label htmlFor="model" className="mb-2 block text-sm font-medium" style={{ color: 'var(--sm-text-primary)' }}>
+                  Overall Model
+                </label>
+                <select
+                  id="model"
+                  value={selectedModelName}
+                  onChange={(event) => onModelChange(event.target.value)}
+                  disabled={unlockedModels.length === 0 || isRunning}
+                  className="sm-select h-12 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {unlockedModels.length === 0 ? <option value="">No verified models</option> : null}
+                  {Object.entries(modelsByProvider).map(([provider, providerModels]) => (
+                    <optgroup key={provider} label={provider}>
+                      {providerModels.map((model) => (
+                        <option key={model.name} value={model.name}>
+                          {model.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+              <p className="text-sm leading-6" style={{ color: 'var(--sm-text-tertiary)' }}>
+                {isPractice
+                  ? "Alignment mode uses one AI opponent, then Judge and Coach when the session ends."
+                  : "The router decides whether this is a normal chat or a strategy simulation."}
+              </p>
+            </div>
+          )}
+
+          <div className="flex-1 min-w-0">
             <label htmlFor="topic" className="mb-2 block text-sm font-medium" style={{ color: 'var(--sm-text-primary)' }}>
               {messageLabel}
             </label>
-            <div className="flex flex-col gap-3 md:flex-row relative">
-              <textarea
-                id="topic"
-                value={topic}
-                onChange={(event) => onTopicChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    if (canSend) {
-                      onSend();
+            <div className="flex flex-col gap-4">
+              <div className="relative flex flex-col flex-1">
+                <textarea
+                  id="topic"
+                  value={isRESTSession && sessionMode === "ai_vs_ai" && hasMessages ? "Autonomous simulation running turn-by-turn. Press 'Execute Next Turn' below to step the simulation." : topic}
+                  onChange={(event) => onTopicChange(event.target.value)}
+                  disabled={isRESTSession && sessionMode === "ai_vs_ai" && hasMessages}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      if (isRESTSession && sessionMode === "ai_vs_ai" && hasMessages ? !isRunning : canSend) {
+                        onSend();
+                      }
                     }
-                  }
-                }}
-                placeholder={placeholder}
-                rows={3}
-                className={`sm-textarea min-h-[120px] flex-1 bg-white/[0.02] border border-white/10 rounded-2xl p-4 text-sm focus:border-cyan-500/50 focus:shadow-[0_0_20px_rgba(6,182,212,0.15)] transition-all resize-none ${isListening ? "border-cyan-500/80 shadow-[0_0_25px_rgba(6,182,212,0.25)]" : ""}`}
-              />
-              <div className="absolute bottom-4 right-[140px] flex gap-3 items-center">
-                {isListening && (
-                  <div className="flex items-center gap-1.5 px-2">
-                    <span className="h-1.5 w-1 bg-cyan-400 animate-[bounce_1s_infinite_100ms] rounded-full" />
-                    <span className="h-2 w-1 bg-cyan-400 animate-[bounce_1s_infinite_200ms] rounded-full" />
-                    <span className="h-3 w-1 bg-cyan-400 animate-[bounce_1s_infinite_300ms] rounded-full" />
-                    <span className="h-2 w-1 bg-cyan-400 animate-[bounce_1s_infinite_400ms] rounded-full" />
-                    <span className="h-1.5 w-1 bg-cyan-400 animate-[bounce_1s_infinite_500ms] rounded-full" />
-                  </div>
-                )}
-                {isSupported && (
+                  }}
+                  placeholder={placeholder}
+                  rows={3}
+                  className={`sm-textarea min-h-[120px] w-full bg-white/[0.04] border border-white/10 rounded-2xl p-4 pr-16 text-sm text-white font-medium placeholder:text-slate-500 focus:border-cyan-500/50 focus:shadow-[0_0_20px_rgba(6,182,212,0.15)] transition-all resize-none ${isListening ? "border-cyan-500/80 shadow-[0_0_25px_rgba(6,182,212,0.25)]" : ""}`}
+                />
+                <div className="absolute bottom-3 right-3 flex gap-3 items-center pointer-events-auto">
+                  {isListening && (
+                    <div className="flex items-center gap-1.5 px-2 bg-zinc-950/60 backdrop-blur rounded-full py-0.5 border border-white/5">
+                      <span className="h-1.5 w-1 bg-cyan-400 animate-[bounce_1s_infinite_100ms] rounded-full" />
+                      <span className="h-2 w-1 bg-cyan-400 animate-[bounce_1s_infinite_200ms] rounded-full" />
+                      <span className="h-3 w-1 bg-cyan-400 animate-[bounce_1s_infinite_300ms] rounded-full" />
+                      <span className="h-2 w-1 bg-cyan-400 animate-[bounce_1s_infinite_400ms] rounded-full" />
+                      <span className="h-1.5 w-1 bg-cyan-400 animate-[bounce_1s_infinite_500ms] rounded-full" />
+                    </div>
+                  )}
+                  {isSupported && (
+                    <button
+                      type="button"
+                      onClick={handleVoiceToggle}
+                      className={`relative flex h-10 w-10 items-center justify-center rounded-full transition-all duration-300 ${
+                        isListening 
+                          ? "bg-cyan-500 text-white sm-animate-pulse-glow shadow-[0_0_20px_rgba(6,182,212,0.6)] scale-110" 
+                          : "bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white hover:scale-105 border border-white/5 hover:border-white/20"
+                      }`}
+                      title="Voice Input"
+                    >
+                      {isListening && (
+                        <span className="absolute inset-0 rounded-full border border-cyan-400 animate-ping opacity-75" />
+                      )}
+                      {isListening ? (
+                        <svg className="relative z-10" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="6" height="6"/></svg>
+                      ) : (
+                        <svg className="relative z-10" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-3 justify-end items-center">
+                {hasMessages && (
                   <button
                     type="button"
-                    onClick={handleVoiceToggle}
-                    className={`relative flex h-12 w-12 items-center justify-center rounded-full transition-all duration-300 ${
-                      isListening 
-                        ? "bg-cyan-500 text-white sm-animate-pulse-glow shadow-[0_0_30px_rgba(6,182,212,0.6)] scale-110" 
-                        : "bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white hover:scale-105 border border-white/5 hover:border-white/20"
-                    }`}
-                    title="Voice Input"
+                    onClick={onNewDebate}
+                    disabled={isRunning}
+                    className="h-11 px-5 rounded-xl bg-gradient-to-r from-red-500/20 to-amber-500/10 hover:from-red-500/30 hover:to-amber-500/20 border border-red-500/30 text-red-200 font-bold tracking-wide shadow-[0_0_15px_rgba(239,68,68,0.1)] hover:shadow-[0_0_20px_rgba(239,68,68,0.2)] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                   >
-                    {isListening && (
-                      <span className="absolute inset-0 rounded-full border border-cyan-400 animate-ping opacity-75" />
-                    )}
-                    {isListening ? (
-                       <svg className="relative z-10" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="6" height="6"/></svg>
-                    ) : (
-                       <svg className="relative z-10" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
-                    )}
+                    New Debate
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={onSend}
+                  disabled={!(isRESTSession && sessionMode === "ai_vs_ai" && hasMessages ? !isRunning : canSend)}
+                  className="h-11 px-6 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-bold tracking-wide shadow-[0_0_15px_rgba(99,102,241,0.4)] hover:shadow-[0_0_25px_rgba(6,182,212,0.6)] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                >
+                  {isRunning ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                      Processing
+                    </span>
+                  ) : (isRESTSession && sessionMode === "ai_vs_ai" && hasMessages) ? "Execute Next Turn" : (isPractice ? "Synchronize" : "Execute")}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={onSend}
-                disabled={!canSend}
-                className="h-12 md:h-auto min-w-[120px] rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-bold tracking-wide shadow-[0_0_15px_rgba(99,102,241,0.4)] hover:shadow-[0_0_25px_rgba(6,182,212,0.6)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isRunning ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                    Processing
-                  </span>
-                ) : isPractice ? "Synchronize" : "Execute"}
-              </button>
             </div>
           </div>
         </div>
@@ -888,7 +1098,7 @@ function MessageBubble({
   );
 }
 
-function MessageCosts({
+export function MessageCosts({
   message,
   settings
 }: {
@@ -935,7 +1145,7 @@ function MessageCosts({
   );
 }
 
-function CostBox({
+export function CostBox({
   summary,
   settings,
   label = "Session Value"
@@ -994,6 +1204,8 @@ function CostBox({
 
 function StatsPanel({
   analytics,
+  realtimeAnalytics,
+  sessionMode,
   history,
   debates,
   selectedDebateId,
@@ -1004,6 +1216,8 @@ function StatsPanel({
   onVerdictReview
 }: {
   analytics: DebateAnalytics | null;
+  realtimeAnalytics?: any | null;
+  sessionMode?: string;
   history: DebateAnalytics[];
   debates: DebateRecord[];
   selectedDebateId: string;
@@ -1017,6 +1231,18 @@ function StatsPanel({
     note: string
   ) => Promise<void>;
 }) {
+  if (sessionMode === "ai_vs_ai" && realtimeAnalytics) {
+    return (
+      <section className="min-h-0 flex-1 overflow-y-auto p-4 space-y-6">
+        <CognitiveMatrixPanel data={realtimeAnalytics.cognitive_matrix} />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <AlphaClusterPanel data={realtimeAnalytics.alpha_cluster} />
+          <BetaClusterPanel data={realtimeAnalytics.beta_cluster} />
+        </div>
+      </section>
+    );
+  }
+
   if (!analytics) {
     return (
       <section className="min-h-0 flex-1 overflow-y-auto p-6">
@@ -2439,10 +2665,53 @@ function SettingsPanel({
     (role) => role.key !== "judge_assistant" || settings.judge_assistant_enabled
   );
 
+  const isRESTSession = Boolean(session.ai_a_model);
+
   return (
     <section className="min-h-0 flex-1 overflow-y-auto p-4">
       <div className="mx-auto max-w-5xl space-y-4">
         <h2 className="text-2xl font-semibold ">Chat Settings</h2>
+
+        {isRESTSession ? (
+          <Panel title="Strategic State Machine Selections">
+            <div 
+              className="rounded-xl border p-4 mb-4" 
+              style={{ 
+                borderColor: 'var(--sm-border-accent)', 
+                background: 'linear-gradient(135deg, rgba(99,102,241,0.05), rgba(6,182,212,0.03))' 
+              }}
+            >
+              <p className="text-xs font-bold uppercase tracking-wider text-cyan-400">Node Orchestration</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--sm-text-secondary)' }}>
+                These are the assigned cognitive models and rounds allocated for this state machine. To prevent state bleeding, changing these parameters is locked during active rounds.
+              </p>
+            </div>
+            
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-xl p-3.5 border bg-white/[0.02]" style={{ borderColor: 'var(--sm-border)' }}>
+                <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider block">AI A / Opponent Node</span>
+                <span className="text-sm font-semibold mt-1 block" style={{ color: 'var(--sm-text-primary)' }}>{session.ai_a_model}</span>
+              </div>
+              
+              {session.mode === "ai_vs_ai" ? (
+                <div className="rounded-xl p-3.5 border bg-white/[0.02]" style={{ borderColor: 'var(--sm-border)' }}>
+                  <span className="text-xs font-bold text-cyan-400 uppercase tracking-wider block">AI B Node</span>
+                  <span className="text-sm font-semibold mt-1 block" style={{ color: 'var(--sm-text-primary)' }}>{session.ai_b_model}</span>
+                </div>
+              ) : null}
+
+              <div className="rounded-xl p-3.5 border bg-white/[0.02]" style={{ borderColor: 'var(--sm-border)' }}>
+                <span className="text-xs font-bold text-amber-400 uppercase tracking-wider block">Adjudicator Node</span>
+                <span className="text-sm font-semibold mt-1 block" style={{ color: 'var(--sm-text-primary)' }}>{session.judge_model}</span>
+              </div>
+
+              <div className="rounded-xl p-3.5 border bg-white/[0.02]" style={{ borderColor: 'var(--sm-border)' }}>
+                <span className="text-xs font-bold uppercase tracking-wider block" style={{ color: 'var(--sm-text-secondary)' }}>Total Rounds</span>
+                <span className="text-sm font-semibold mt-1 block" style={{ color: 'var(--sm-text-primary)' }}>{session.rounds} Rounds</span>
+              </div>
+            </div>
+          </Panel>
+        ) : null}
 
         <Panel title="Chat meta">
           <label className="block text-sm font-medium " htmlFor="chat-title">
@@ -3690,7 +3959,7 @@ function ToggleSetting({
   );
 }
 
-function MarkdownText({ text }: { text: string }) {
+export function MarkdownText({ text }: { text: string }) {
   const lines = text.split(/\n/);
   const elements: ReactNode[] = [];
   let listItems: ReactNode[] = [];
@@ -3775,7 +4044,7 @@ function renderInline(text: string) {
   return segments.length > 0 ? segments : text;
 }
 
-function estimateTokens(text: string) {
+export function estimateTokens(text: string) {
   if (!text.trim()) {
     return 0;
   }

@@ -1,23 +1,23 @@
 import unittest
 from unittest.mock import patch
 
-from backend.app.costing import CostTracker, estimate_tokens, normalize_currency
+from app.costing import CostTracker, estimate_tokens, normalize_currency
 
 
 class CostingTests(unittest.TestCase):
-    @patch("backend.app.costing._openrouter_pricing_entries")
+    @patch("app.costing._openrouter_pricing_entries")
     def test_cost_tracker_prefers_live_openrouter_pricing_when_matched(self, mock_entries) -> None:
         mock_entries.return_value = (
             {
-                "id": "moonshotai/kimi-k2-thinking",
-                "canonical_slug": "moonshotai/kimi-k2-thinking",
-                "name": "Kimi K2 Thinking",
+                "id": "nvidia/llama-3.1-nemotron-70b-instruct",
+                "canonical_slug": "nvidia/llama-3.1-nemotron-70b-instruct",
+                "name": "Nemotron 70B Instruct",
                 "pricing": {"prompt": "0.00000047", "completion": "0.000002"},
             },
         )
         tracker = CostTracker()
         tracker.record_call(
-            model_name="kimi-k2-thinking",
+            model_name="nemotron-70b",
             input_text="hello world",
             output_text="a short answer",
             operation="Council Assistant",
@@ -25,23 +25,23 @@ class CostingTests(unittest.TestCase):
 
         summary = tracker.summary("USD")
 
-        self.assertEqual(summary["models"][0]["model"], "kimi-k2-thinking")
+        self.assertEqual(summary["models"][0]["model"], "nemotron-70b")
         self.assertTrue(summary["models"][0]["pricing_live"])
         self.assertIn("OpenRouter live pricing", summary["rate_source"])
         self.assertGreater(summary["total"], 0)
 
-    @patch("backend.app.costing._openrouter_pricing_entries")
+    @patch("app.costing._openrouter_pricing_entries")
     def test_cost_tracker_groups_models_and_converts_currency(self, mock_entries) -> None:
         mock_entries.return_value = ()
         tracker = CostTracker()
         tracker.record_call(
-            model_name="gpt-4o-mini",
+            model_name="llama-3.1-8b",
             input_text="hello world",
             output_text="a short answer",
             operation="Council Assistant",
         )
         tracker.record_call(
-            model_name="gpt-4o-mini",
+            model_name="llama-3.1-8b",
             input_text="more context",
             output_text="another answer",
             operation="Council Assistant",
@@ -61,7 +61,7 @@ class CostingTests(unittest.TestCase):
         self.assertEqual(normalize_currency("sgp"), "SGD")
         self.assertEqual(normalize_currency("bad"), "USD")
 
-    @patch("backend.app.costing._openrouter_pricing_entries")
+    @patch("app.costing._openrouter_pricing_entries")
     def test_unknown_model_is_marked_unpriced_instead_of_silent_zero(self, mock_entries) -> None:
         mock_entries.return_value = ()
         tracker = CostTracker()

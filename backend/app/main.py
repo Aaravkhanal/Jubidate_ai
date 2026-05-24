@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+import asyncio
+import logging
 import os
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.analytics import analyze_debate, session_chart_data
@@ -8,9 +10,14 @@ from app.config import settings
 from app.database import Database
 from app.debate import ClientDisconnectedError, DebateError, DebateManager
 from app.model_registry import (
+    DEFAULT_FALLBACK_ORDER,
     PROVIDER_ORDER,
     SUPPORTED_MODELS,
     available_models,
+    get_background_verification_results,
+    is_background_verification_completed,
+    provider_status,
+    run_background_verification,
     verify_models_runtime,
 )
 from app.runtime_diary import runtime_diary
@@ -27,7 +34,13 @@ from app.schemas import (
     ResetUserDebateProfileRequest,
     SessionSettingsUpdate,
     VerdictReviewRequest,
+    RESTDebateCreateRequest,
+    RESTDebateStartRequest,
+    RESTDebateNextTurnRequest,
+    SessionModelsUpdateRequest,
 )
+
+logger = logging.getLogger("jubidate.main")
 
 
 db = Database(settings.database_path)
@@ -49,22 +62,49 @@ async def safe_send_json(websocket: WebSocket, payload: dict) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
+    # Log startup diagnostics
+    configured = available_models()
+    nvidia_key = bool(os.getenv("NVIDIA_API_KEY", "").strip())
+    logger.info(
+        "%s backend starting. DB: %s | NVIDIA key: %s | Configured models: %d",
+        settings.app_name, settings.database_path, nvidia_key, len(configured),
+    )
     runtime_diary.record(
         "backend terminal",
         "startup",
-        f"{settings.app_name} backend started. Database path: {settings.database_path}",
+        f"{settings.app_name} backend started. Database path: {settings.database_path}. "
+        f"NVIDIA key: {'detected' if nvidia_key else 'MISSING'}. "
+        f"Configured models: {len(configured)}.",
     )
+    # Kick off background model verification (non-blocking)
+    asyncio.create_task(run_background_verification())
     yield
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
+@app.get("/")
+def root():
+    configured = available_models()
+    return {
+        "app": settings.app_name,
+        "status": "running",
+        "configured_models": len(configured),
+        "verification_completed": is_background_verification_completed(),
+        "endpoints": [
+            "GET /health",
+            "GET /api/models",
+            "GET /api/providers/status",
+            "GET /api/sessions",
+            "GET /api/council-settings",
+        ],
+    }
+
+
 @app.get("/debug-env")
 def debug_env():
     return {
-        "GROQ_API_KEY": bool(os.getenv("GROQ_API_KEY")),
-        "OPENAI_API_KEY": bool(os.getenv("OPENAI_API_KEY")),
-        "OPENROUTER_API_KEY": bool(os.getenv("OPENROUTER_API_KEY")),
+        "NVIDIA_API_KEY": bool(os.getenv("NVIDIA_API_KEY")),
         "GOOGLE_API_KEY": bool(os.getenv("GOOGLE_API_KEY")),
     }
 
@@ -89,15 +129,35 @@ def health() -> dict:
 @app.get("/api/models")
 async def models() -> dict:
     configured = available_models()
-    verification = await verify_models_runtime(configured)
-    unlocked_models = []
-    for model in configured:
-        availability = verification.get(model.name)
-        if availability and availability.available:
-            payload = model.public_dict(configured=True)
-            if availability.reason:
-                payload["availability_reason"] = availability.reason
-            unlocked_models.append(payload)
+    bg_results = get_background_verification_results()
+    bg_done = is_background_verification_completed()
+
+    # If background verification has completed, use those results
+    # If not, return all configured models optimistically (API key exists = usable)
+    if bg_done and bg_results:
+        # Use verified results
+        unlocked_models = []
+        for model in configured:
+            availability = bg_results.get(model.name)
+            if availability and availability.available:
+                payload = model.public_dict(configured=True)
+                if availability.reason:
+                    payload["availability_reason"] = availability.reason
+                unlocked_models.append(payload)
+        # If ALL probes failed but key exists, still return models optimistically
+        # (probes can fail due to rate limits, temporary issues, etc.)
+        if not unlocked_models and configured:
+            logger.warning(
+                "All %d model probes failed but API key exists — returning models optimistically",
+                len(configured),
+            )
+            unlocked_models = [model.public_dict(configured=True) for model in configured]
+    elif configured:
+        # Background verification not done yet — return optimistically
+        unlocked_models = [model.public_dict(configured=True) for model in configured]
+    else:
+        unlocked_models = []
+
     include_mock = settings.mock_llm and not unlocked_models
     if include_mock:
         unlocked_models.insert(
@@ -112,34 +172,28 @@ async def models() -> dict:
                 "availability_reason": None,
             },
         )
+
     providers = []
     for provider in PROVIDER_ORDER:
         provider_models = [model for model in SUPPORTED_MODELS if model.provider == provider]
         if not provider_models:
             continue
-        verified_models = [
-            model
-            for model in provider_models
-            if verification.get(model.name, None) and verification[model.name].available
-        ]
+        # Use configured models (key exists) as the available set
+        runtime_models = [model for model in provider_models if model.runtime_available]
         direct_configured = any(model.direct_api_key for model in provider_models)
-        if not verified_models and not direct_configured:
+        if not runtime_models and not direct_configured:
             continue
-            
-        first_reason = next(
-            (
-                verification[model.name].reason
-                for model in provider_models
-                if model.name in verification and verification[model.name].reason
-            ),
-            None,
-        )
-        
-        if verified_models:
-            status_label = f"{len(verified_models)} unlocked"
-            status_reason = None
-        else:
-            continue
+
+        status_label = f"{len(runtime_models)} available"
+        status_reason = None
+        if bg_done and bg_results:
+            verified_count = sum(
+                1 for m in provider_models
+                if bg_results.get(m.name) and bg_results[m.name].available
+            )
+            status_label = f"{verified_count} verified" if verified_count else f"{len(runtime_models)} configured"
+        elif not bg_done:
+            status_label = f"{len(runtime_models)} configured (verifying...)"
 
         providers.append(
             {
@@ -147,20 +201,21 @@ async def models() -> dict:
                 "provider_label": provider_models[0].provider_label,
                 "api_key_env": provider_models[0].api_key_env,
                 "configured": True,
-                "unlocked_model_count": len(verified_models),
+                "unlocked_model_count": len(runtime_models),
                 "total_model_count": len(provider_models),
-                "models": [model.public_dict(configured=True) for model in verified_models],
+                "models": [model.public_dict(configured=True) for model in runtime_models],
                 "status_label": status_label,
                 "status_reason": status_reason,
             }
         )
+
     availability_notice = None
     if not unlocked_models and not include_mock:
         if configured:
-            reasons = [reason for reason in (provider["status_reason"] for provider in providers) if reason]
-            availability_notice = reasons[0] if reasons else "No working models passed the live check."
+            availability_notice = "Models are configured but verification is still running. Try again in a few seconds."
         else:
             availability_notice = "No working API keys are available yet."
+
     return {
         "models": unlocked_models,
         "providers": providers,
@@ -170,7 +225,13 @@ async def models() -> dict:
         "selection_required": True,
         "mock_mode": settings.mock_llm,
         "availability_notice": availability_notice,
+        "verification_completed": bg_done,
     }
+
+
+@app.get("/api/providers/status")
+def providers_status() -> dict:
+    return provider_status()
 
 
 @app.get("/api/council-settings")
@@ -456,6 +517,20 @@ def update_settings(session_id: str, payload: SessionSettingsUpdate) -> dict:
     return session_settings
 
 
+@app.patch("/api/sessions/{session_id}/models", response_model=ChatSession)
+def update_session_models(session_id: str, payload: SessionModelsUpdateRequest) -> dict:
+    session = db.update_session_models(
+        session_id,
+        ai_a_model=payload.ai_a_model,
+        ai_b_model=payload.ai_b_model,
+        judge_model=payload.judge_model,
+        rounds=payload.rounds,
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return session
+
+
 @app.get("/api/sessions/{session_id}/analytics")
 def session_analytics(
     session_id: str, debate_id: str | None = Query(default=None, alias="debate_id")
@@ -731,3 +806,550 @@ async def debate_socket(websocket: WebSocket, session_id: str):
                     return
     except WebSocketDisconnect:
         return
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REST-Based Turn Orchestration System
+# ─────────────────────────────────────────────────────────────────────────────
+
+import litellm
+from litellm import acompletion
+from app.model_registry import get_model
+from textwrap import dedent
+
+async def rest_generate_completion(model_name: str, messages: list[dict[str, str]], max_tokens: int = 500) -> str:
+    # If mock_llm is true, return mock text
+    if settings.mock_llm:
+        return f"[Mock Response for model {model_name}] This is a compelling, highly structured logical contribution demonstrating rigor, citing robust facts, and framing a clear thesis for the debate round."
+
+    model = get_model(model_name)
+    if not model:
+        return f"[Fallback Response] Model {model_name} is unmapped, here is fallback debate content."
+
+    route = model.route
+    if not route:
+        # Fallback to mock/optimistic NVIDIA call or mock if key is missing
+        if not os.getenv("NVIDIA_API_KEY"):
+            return f"[Mock Fallback Response] API Key for {model_name} was missing. Here is a simulated, high-quality analytical contribution."
+        # If API key exists, try creating route dynamically
+        litellm_model = f"openai/nvidia/{model_name}" if not model_name.startswith("openai/") else model_name
+        from app.model_registry import ModelRoute
+        route = ModelRoute(litellm_model, os.getenv("NVIDIA_API_KEY", ""), "nvidia")
+
+    candidate_models = (route.litellm_model, *route.fallback_models)
+    last_exc = None
+    for candidate_model in candidate_models:
+        try:
+            kwargs = {
+                "model": candidate_model,
+                "messages": messages,
+                "api_key": route.api_key,
+                "stream": False,
+                "temperature": 0.55,
+                "max_tokens": max_tokens,
+                "timeout": 45,
+            }
+            if route.api_base:
+                kwargs["api_base"] = route.api_base
+            response = await acompletion(**kwargs)
+            # Safe parsing
+            if response and response.choices:
+                return response.choices[0].message.content or ""
+        except Exception as exc:
+            last_exc = exc
+            continue
+    if last_exc:
+        logger.error(f"REST LiteLLM call failed for {model_name}: {last_exc}")
+        return f"[LLM Error Fallback Response] Model {model_name} encountered an error: {str(last_exc)}"
+    return "[Empty Response]"
+
+
+@app.get("/debate/models")
+def get_debate_models():
+    return {"models": [m.name for m in available_models()]}
+
+
+@app.get("/debate/modes")
+def get_debate_modes():
+    return {
+        "modes": [
+            {"key": "ai_vs_human", "label": "Human vs AI"},
+            {"key": "ai_vs_ai", "label": "AI vs AI"}
+        ]
+    }
+
+
+@app.post("/debate/create")
+def rest_create_debate_session(payload: RESTDebateCreateRequest):
+    mode = payload.mode.strip().lower()
+    ai_a = payload.ai_a_model.strip()
+    ai_b = (payload.ai_b_model or "").strip()
+    judge = payload.judge_model.strip()
+    rounds = payload.rounds
+
+    if mode == "ai_vs_human":
+        if ai_a.lower() == judge.lower():
+            raise HTTPException(
+                status_code=422,
+                detail="Judge AI must not be the same model as the Opponent AI."
+            )
+    elif mode == "ai_vs_ai":
+        if not ai_b:
+            raise HTTPException(
+                status_code=422,
+                detail="AI B model is required for AI vs AI mode."
+            )
+        if ai_a.lower() == judge.lower() or ai_b.lower() == judge.lower():
+            raise HTTPException(
+                status_code=422,
+                detail="Judge model must always be different from both AI A and AI B."
+            )
+        if ai_a.lower() == ai_b.lower():
+            raise HTTPException(
+                status_code=422,
+                detail="AI A and AI B must be different debater models."
+            )
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid debate mode selected."
+        )
+
+    session = db.create_session(
+        settings.max_sessions,
+        mode=mode,
+        ai_a_model=ai_a,
+        ai_b_model=ai_b,
+        judge_model=judge,
+        rounds=rounds,
+    )
+    return session
+
+
+@app.post("/debate/start")
+async def rest_start_debate(payload: RESTDebateStartRequest):
+    session_id = payload.session_id
+    topic = payload.topic.strip()
+    if not topic:
+        raise HTTPException(status_code=422, detail="Topic must not be empty.")
+
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    debate = db.create_debate(session_id, topic, mode="debate")
+    debate_id = debate["id"]
+
+    db.add_message(
+        session_id=session_id,
+        debate_id=debate_id,
+        role="user",
+        speaker="System" if session["mode"] == "ai_vs_ai" else "You",
+        model="user" if session["mode"] == "ai_vs_ai" else "human",
+        content=topic,
+    )
+
+    if session["mode"] == "ai_vs_human":
+        ai_a_model = session["ai_a_model"]
+        sys_prompt = dedent(
+            f"""
+            You are a master debater in a highly prestigious strategic council. Your objective is to argue with supreme clarity, academic rigour, and unyielding logical force.
+            You are debating the topic: '{topic}'.
+            Your assigned side: CON (opposing side).
+            Your opponent is: Human (proposing side).
+            Keep your response academic, extremely cohesive, and under 500 words. Do not write meta-commentary.
+            """
+        ).strip()
+        user_prompt = dedent(
+            f"""
+            Topic: {topic}
+            Your Side: CON
+
+            The Human Pro opponent has initiated the debate with the topic proposal:
+            "{topic}"
+
+            It is your turn. Write your opening constructive argument opposing this topic.
+            """
+        ).strip()
+
+        completion = await rest_generate_completion(
+            model_name=ai_a_model,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=600
+        )
+
+        db.add_message(
+            session_id=session_id,
+            debate_id=debate_id,
+            role="assistant",
+            speaker=f"Con - {ai_a_model}",
+            model=ai_a_model,
+            content=completion,
+            phase={
+                "key": "con_constructive_1",
+                "title": "Con Opening Argument",
+                "index": 1,
+                "total": session["rounds"] * 2,
+                "kind": "constructive"
+            }
+        )
+
+    else:
+        ai_a_model = session["ai_a_model"]
+        sys_prompt = dedent(
+            f"""
+            You are a master debater in a highly prestigious strategic council. Your objective is to argue with supreme clarity, academic rigour, and unyielding logical force.
+            You are debating the topic: '{topic}'.
+            Your assigned side: PRO (supporting side).
+            Your opponent model is: {session['ai_b_model']}.
+            Keep your response academic, extremely cohesive, and under 500 words. Do not write meta-commentary.
+            """
+        ).strip()
+        user_prompt = dedent(
+            f"""
+            Topic: {topic}
+            Your Side: PRO
+
+            The debate has begun on the topic: "{topic}".
+            It is your turn. Write your opening constructive argument in favor of this topic.
+            """
+        ).strip()
+
+        completion = await rest_generate_completion(
+            model_name=ai_a_model,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=600
+        )
+
+        db.add_message(
+            session_id=session_id,
+            debate_id=debate_id,
+            role="assistant",
+            speaker=f"Pro - {ai_a_model}",
+            model=ai_a_model,
+            content=completion,
+            phase={
+                "key": "pro_constructive_1",
+                "title": "Pro Opening Argument",
+                "index": 1,
+                "total": session["rounds"] * 2,
+                "kind": "constructive"
+            }
+        )
+
+    return {
+        "session": db.get_session(session_id),
+        "debate": db.get_debate(session_id, debate_id),
+        "messages": db.list_messages_for_debate(session_id, debate_id)
+    }
+
+
+@app.post("/debate/next-turn")
+async def rest_next_turn(payload: RESTDebateNextTurnRequest):
+    session_id = payload.session_id
+    debate_id = payload.debate_id
+    session = db.get_session(session_id)
+    debate = db.get_debate(session_id, debate_id)
+
+    if not session or not debate:
+        raise HTTPException(status_code=404, detail="Session or Debate not found.")
+
+    topic = debate["topic"]
+    messages = db.list_messages_for_debate(session_id, debate_id)
+
+    if session["mode"] == "ai_vs_human":
+        human_text = (payload.content or "").strip()
+        if not human_text:
+            raise HTTPException(status_code=422, detail="Human argument content is required for next turn.")
+
+        human_messages = [m for m in messages if m["role"] == "user" and m["model"] == "human"]
+        human_turns = len(human_messages) + 1
+
+        human_turn_idx = human_turns * 2 - 1
+        db.add_message(
+            session_id=session_id,
+            debate_id=debate_id,
+            role="user",
+            speaker="You",
+            model="human",
+            content=human_text,
+            phase={
+                "key": f"pro_rebuttal_{human_turns}",
+                "title": f"Pro Turn {human_turns}",
+                "index": human_turn_idx,
+                "total": session["rounds"] * 2,
+                "kind": "rebuttal"
+            }
+        )
+
+        updated_messages = db.list_messages_for_debate(session_id, debate_id)
+        transcript_text = "\n\n".join([f"{m['speaker']}: {m['content']}" for m in updated_messages if m["model"] != "user"])
+
+        ai_a_model = session["ai_a_model"]
+        is_last_round = human_turns >= session["rounds"]
+
+        sys_prompt = dedent(
+            f"""
+            You are a master debater in a highly prestigious strategic council. Your objective is to argue with supreme clarity, academic rigour, and unyielding logical force.
+            You are debating the topic: '{topic}'.
+            Your assigned side: CON (opposing side).
+            Your opponent is: Human (proposing side).
+            Keep your response academic, extremely cohesive, and under 500 words. Do not write meta-commentary.
+            """
+        ).strip()
+        user_prompt = dedent(
+            f"""
+            Topic: {topic}
+            Your Side: CON
+
+            Below is the chronological transcript of the debate so far:
+            {transcript_text}
+
+            It is your turn. Write your rebuttal opposing the Pro side's arguments.
+            """
+        ).strip()
+
+        completion = await rest_generate_completion(
+            model_name=ai_a_model,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=600
+        )
+
+        ai_turn_idx = human_turns * 2
+        db.add_message(
+            session_id=session_id,
+            debate_id=debate_id,
+            role="assistant",
+            speaker=f"Con - {ai_a_model}",
+            model=ai_a_model,
+            content=completion,
+            phase={
+                "key": f"con_rebuttal_{human_turns}",
+                "title": f"Con Rebuttal {human_turns}",
+                "index": ai_turn_idx,
+                "total": session["rounds"] * 2,
+                "kind": "rebuttal"
+            }
+        )
+
+        if is_last_round:
+            final_messages = db.list_messages_for_debate(session_id, debate_id)
+            final_transcript = "\n\n".join([f"{m['speaker']}: {m['content']}" for m in final_messages if m["model"] != "user"])
+
+            judge_model = session["judge_model"]
+            judge_sys = dedent(
+                f"""
+                You are an elite, independent Adjudicator. Your task is to analyze the debate with absolute objectivity and render a final, structured verdict.
+                You must:
+                1. Independently evaluate the logical coherence of both sides.
+                2. Identify key points of clash and who won them.
+                3. Highlight any ignored challenges or unsupported claims.
+                4. Explicitly declare a winner ('Pro' or 'Con') or declare it a draw/unclear with a rigorous justification.
+                5. Do not bias towards either side. Be neutral, critical, and objective.
+                """
+            ).strip()
+            judge_user = dedent(
+                f"""
+                Topic: {topic}
+
+                Below is the complete transcript of the debate:
+                {final_transcript}
+
+                Perform your final adjudication now. Write a comprehensive, premium evaluation detailing your reasoning, a scoring matrix, and a clear declaration of the winner.
+                """
+            ).strip()
+
+            verdict = await rest_generate_completion(
+                model_name=judge_model,
+                messages=[
+                    {"role": "system", "content": judge_sys},
+                    {"role": "user", "content": judge_user}
+                ],
+                max_tokens=1000
+            )
+
+            db.add_message(
+                session_id=session_id,
+                debate_id=debate_id,
+                role="judge",
+                speaker="Judge",
+                model=judge_model,
+                content=verdict,
+            )
+
+            db.complete_debate(debate_id, verdict)
+
+    else:
+        ai_messages = [m for m in messages if m["role"] == "assistant"]
+        turn_count = len(ai_messages)
+
+        if turn_count >= session["rounds"] * 2:
+            return {
+                "session": db.get_session(session_id),
+                "debate": db.get_debate(session_id, debate_id),
+                "messages": db.list_messages_for_debate(session_id, debate_id)
+            }
+
+        is_con_turn = (turn_count % 2 == 1)
+        transcript_text = "\n\n".join([f"{m['speaker']}: {m['content']}" for m in messages if m["model"] != "user"])
+
+        if is_con_turn:
+            ai_b_model = session["ai_b_model"]
+            sys_prompt = dedent(
+                f"""
+                You are a master debater in a highly prestigious strategic council. Your objective is to argue with supreme clarity, academic rigour, and unyielding logical force.
+                You are debating the topic: '{topic}'.
+                Your assigned side: CON (opposing side).
+                Your opponent model is: {session['ai_a_model']}.
+                Keep your response academic, extremely cohesive, and under 500 words. Do not write meta-commentary.
+                """
+            ).strip()
+            user_prompt = dedent(
+                f"""
+                Topic: {topic}
+                Your Side: CON
+
+                Below is the chronological transcript of the debate so far:
+                {transcript_text}
+
+                It is your turn. Write your next strategic argument opposing the Pro side's thesis.
+                """
+            ).strip()
+
+            completion = await rest_generate_completion(
+                model_name=ai_b_model,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=600
+            )
+
+            current_round = (turn_count // 2) + 1
+            db.add_message(
+                session_id=session_id,
+                debate_id=debate_id,
+                role="assistant",
+                speaker=f"Con - {ai_b_model}",
+                model=ai_b_model,
+                content=completion,
+                phase={
+                    "key": f"con_rebuttal_{current_round}",
+                    "title": f"Con Turn {current_round}",
+                    "index": turn_count + 1,
+                    "total": session["rounds"] * 2,
+                    "kind": "rebuttal"
+                }
+            )
+
+            if current_round >= session["rounds"]:
+                final_messages = db.list_messages_for_debate(session_id, debate_id)
+                final_transcript = "\n\n".join([f"{m['speaker']}: {m['content']}" for m in final_messages if m["model"] != "user"])
+
+                judge_model = session["judge_model"]
+                judge_sys = dedent(
+                    f"""
+                    You are an elite, independent Adjudicator. Your task is to analyze the debate with absolute objectivity and render a final, structured verdict.
+                    You must:
+                    1. Independently evaluate the logical coherence of both sides.
+                    2. Identify key points of clash and who won them.
+                    3. Highlight any ignored challenges or unsupported claims.
+                    4. Explicitly declare a winner ('Pro' or 'Con') or declare it a draw/unclear with a rigorous justification.
+                    5. Do not bias towards either side. Be neutral, critical, and objective.
+                    """
+                ).strip()
+                judge_user = dedent(
+                    f"""
+                    Topic: {topic}
+
+                    Below is the complete transcript of the debate:
+                    {final_transcript}
+
+                    Perform your final adjudication now. Write a comprehensive, premium evaluation detailing your reasoning, a scoring matrix, and a clear declaration of the winner.
+                    """
+                ).strip()
+
+                verdict = await rest_generate_completion(
+                    model_name=judge_model,
+                    messages=[
+                        {"role": "system", "content": judge_sys},
+                        {"role": "user", "content": judge_user}
+                    ],
+                    max_tokens=1000
+                )
+
+                db.add_message(
+                    session_id=session_id,
+                    debate_id=debate_id,
+                    role="judge",
+                    speaker="Judge",
+                    model=judge_model,
+                    content=verdict,
+                )
+
+                db.complete_debate(debate_id, verdict)
+
+        else:
+            ai_a_model = session["ai_a_model"]
+            sys_prompt = dedent(
+                f"""
+                You are a master debater in a highly prestigious strategic council. Your objective is to argue with supreme clarity, academic rigour, and unyielding logical force.
+                You are debating the topic: '{topic}'.
+                Your assigned side: PRO (supporting side).
+                Your opponent model is: {session['ai_b_model']}.
+                Keep your response academic, extremely cohesive, and under 500 words. Do not write meta-commentary.
+                """
+            ).strip()
+            user_prompt = dedent(
+                f"""
+                Topic: {topic}
+                Your Side: PRO
+
+                Below is the chronological transcript of the debate so far:
+                {transcript_text}
+
+                It is your turn. Write your next strategic argument defending the Pro side's thesis.
+                """
+            ).strip()
+
+            completion = await rest_generate_completion(
+                model_name=ai_a_model,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=600
+            )
+
+            current_round = (turn_count // 2) + 1
+            db.add_message(
+                session_id=session_id,
+                debate_id=debate_id,
+                role="assistant",
+                speaker=f"Pro - {ai_a_model}",
+                model=ai_a_model,
+                content=completion,
+                phase={
+                    "key": f"pro_rebuttal_{current_round}",
+                    "title": f"Pro Turn {current_round}",
+                    "index": turn_count + 1,
+                    "total": session["rounds"] * 2,
+                    "kind": "rebuttal"
+                }
+            )
+
+    return {
+        "session": db.get_session(session_id),
+        "debate": db.get_debate(session_id, debate_id),
+        "messages": db.list_messages_for_debate(session_id, debate_id)
+    }
+

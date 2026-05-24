@@ -76,27 +76,13 @@ USER_MESSAGE_MAX_CHARS = 5500
 QUESTION_END_RE = re.compile(r"[?？]\s*$")
 CJK_CHAR_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 MODEL_CONTEXT_LIMITS = {
-    "gpt-4o-mini": 8_192,
-    "gpt-4o": 128_000,
-    "gpt-5.4-mini": 128_000,
-    "gpt-5.4-pro": 128_000,
-    "claude-opus-4-6": 200_000,
-    "claude-sonnet-4-6": 200_000,
-    "claude-haiku-4-5": 200_000,
-    "claude-3.5-sonnet": 200_000,
-    "gemini-3.1-pro": 128_000,
-    "gemini-3-flash": 128_000,
-    "gemini-2.5-flash-lite": 128_000,
-    "llama-4-maverick": 32_768,
-    "llama-4-scout": 32_768,
-    "llama-3.3-70b": 32_768,
-    "minimax-m2.7": 32_768,
-    "minimax-m2.5-lightning": 32_768,
-    "kimi-latest": 128_000,
-    "kimi-k2-thinking": 128_000,
-    "kimi-k2-turbo-preview": 128_000,
-    "kimi-k2.5-vision": 128_000,
-    "moonshot-v1-128k": 128_000,
+    # NVIDIA NIM hosted models
+    "nemotron-70b": 128_000,
+    "llama-3.1-70b": 128_000,
+    "llama-3.1-8b": 128_000,
+    "mixtral-8x7b": 32_768,
+    "mistral-7b": 32_768,
+    "llama-3.2-90b-vision": 128_000,
     "mock-debate-model": 32_768,
 }
 TEAM_DEFINITIONS = (
@@ -1152,7 +1138,7 @@ class DebateManager:
 
     def _debate_flow(self, session_settings: dict[str, Any]) -> list[dict[str, Any]]:
         debaters_per_team = max(1, min(4, int(session_settings.get("debaters_per_team", 2))))
-        debate_rounds = max(1, min(6, int(session_settings.get("debate_rounds", 2))))
+        debate_rounds = max(1, min(6, int(session_settings.get("debate_rounds", 6))))
         cap = max(1, min(4, int(session_settings.get("discussion_messages_per_team", 3))))
         agents = self._active_debate_agents(session_settings)
         lookup = {agent["role"]: agent for agent in agents}
@@ -1686,7 +1672,7 @@ class DebateManager:
         return {
             **session_settings,
             "temperature": float(agent_settings.get("temperature", session_settings.get("temperature", 0.55))),
-            "max_tokens": int(agent_settings.get("max_tokens", session_settings.get("max_tokens", 700))),
+            "max_tokens": int(agent_settings.get("max_tokens", session_settings.get("max_tokens", 2048))),
             "response_length": str(agent_settings.get("response_length", session_settings.get("response_length", "Normal"))),
             "agent_web_search": bool(agent_settings.get("web_search", False)),
         }
@@ -1696,7 +1682,7 @@ class DebateManager:
         defaults = {
             "human_side": "Auto",
             "practice_flow": "Free",
-            "structured_rounds": 3,
+            "structured_rounds": 6,
             "use_user_profile": True,
             "trainer_style": "Coach",
             "training_focus": "Full Debate",
@@ -2460,7 +2446,7 @@ class DebateManager:
         response = None
         for candidate_model in candidate_models:
             try:
-                response = await acompletion(
+                _kwargs: dict = dict(
                     model=candidate_model,
                     messages=messages,
                     api_key=route.api_key,
@@ -2469,6 +2455,9 @@ class DebateManager:
                     max_tokens=int(generation_settings.get("max_tokens", 220)),
                     timeout=min(settings.request_timeout_seconds, 45),
                 )
+                if route.api_base:
+                    _kwargs["api_base"] = route.api_base
+                response = await acompletion(**_kwargs)
                 break
             except Exception as exc:
                 last_exc = exc
@@ -3989,7 +3978,7 @@ class DebateManager:
         fitted_messages = self._fit_messages_to_model(
             messages,
             model_name=model.name,
-            reserve_tokens=int(generation_settings.get("max_tokens", 700)) + 600,
+            reserve_tokens=int(generation_settings.get("max_tokens", 2048)) + 600,
         )
         max_attempts = 3
         for attempt in range(max_attempts):
@@ -4002,8 +3991,16 @@ class DebateManager:
                     fitted_messages,
                     generation_settings,
                 )
-                if finish_reason in {"length", "max_tokens"}:
-                    content = await self._continue_truncated_completion(
+                remaining_continuations = 3
+                while finish_reason in {"length", "max_tokens"} and remaining_continuations > 0:
+                    runtime_diary.record(
+                        "backend terminal",
+                        "stream continuation",
+                        f"Response truncated (finish_reason={finish_reason}). "
+                        f"Continuing ({4 - remaining_continuations}/3)... "
+                        f"Current length: {len(content)} chars.",
+                    )
+                    content, finish_reason = await self._continue_truncated_completion(
                         websocket,
                         stream_id,
                         model,
@@ -4011,6 +4008,7 @@ class DebateManager:
                         content,
                         generation_settings,
                     )
+                    remaining_continuations -= 1
                 if cost_tracker is not None:
                     cost_tracker.record_call(
                         model_name=model.name,
@@ -4018,6 +4016,13 @@ class DebateManager:
                         output_text=content,
                         operation=cost_operation,
                     )
+                runtime_diary.record(
+                    "backend terminal",
+                    "stream completed",
+                    f"Model {model.name} finished. "
+                    f"Final length: {len(content)} chars, "
+                    f"finish_reason: {finish_reason}.",
+                )
                 return content
             except EmptyCompletionError:
                 if attempt < max_attempts - 1:
@@ -4059,21 +4064,40 @@ class DebateManager:
         sanitizer = StreamingSanitizer()
         candidate_models = (route.litellm_model, *route.fallback_models)
         last_exc: Exception | None = None
+        chunk_timeout = 60  # seconds to wait for a single chunk before treating as stalled
         for candidate_model in candidate_models:
             sanitizer = StreamingSanitizer()
             parts = []
             finish_reason = None
             try:
-                response = await acompletion(
+                _kwargs: dict = dict(
                     model=candidate_model,
                     messages=messages,
                     api_key=route.api_key,
                     stream=True,
                     temperature=float(generation_settings.get("temperature", 0.55)),
-                    max_tokens=int(generation_settings.get("max_tokens", 700)),
+                    max_tokens=int(generation_settings.get("max_tokens", 2048)),
                     timeout=settings.request_timeout_seconds,
                 )
-                async for chunk in response:
+                if route.api_base:
+                    _kwargs["api_base"] = route.api_base
+                response = await acompletion(**_kwargs)
+                chunk_count = 0
+                response_iter = response.__aiter__()
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(response_iter.__anext__(), timeout=chunk_timeout)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        runtime_diary.record(
+                            "backend terminal",
+                            "stream timeout",
+                            f"Model {candidate_model} stalled. Timing out chunk generation after {chunk_timeout} seconds."
+                        )
+                        finish_reason = "length"
+                        break
+                    chunk_count += 1
                     finish_reason = self._extract_finish_reason(chunk) or finish_reason
                     delta = self._extract_delta(chunk)
                     if not delta:
@@ -4093,6 +4117,13 @@ class DebateManager:
                         websocket,
                         {"type": "message_delta", "stream_id": stream_id, "delta": tail}
                     )
+                runtime_diary.record(
+                    "backend terminal",
+                    "stream chunks received",
+                    f"Model {candidate_model}: {chunk_count} chunks, "
+                    f"{len(parts)} visible parts, "
+                    f"finish_reason={finish_reason}.",
+                )
                 break
             except Exception as exc:
                 last_exc = exc
@@ -4101,7 +4132,17 @@ class DebateManager:
                         "Browser disconnected before the response finished."
                     ) from exc
                 if parts:
+                    runtime_diary.record(
+                        "backend terminal",
+                        "stream error with partial output",
+                        f"Model {candidate_model} errored after {len(parts)} parts: {exc}",
+                    )
                     raise CompletionStreamError(exc, had_output=True) from exc
+                runtime_diary.record(
+                    "backend terminal",
+                    "stream error no output",
+                    f"Model {candidate_model} failed with no output: {exc}. Trying next fallback.",
+                )
                 continue
         else:
             if last_exc is None:
@@ -4121,10 +4162,10 @@ class DebateManager:
         messages: list[dict[str, str]],
         existing_content: str,
         generation_settings: dict[str, Any],
-    ) -> str:
+    ) -> tuple[str, str | None]:
         continuation_settings = {
             **generation_settings,
-            "max_tokens": min(900, max(320, int(generation_settings.get("max_tokens", 700)))),
+            "max_tokens": max(1024, int(generation_settings.get("max_tokens", 2048))),
         }
         continuation_messages = [
             *messages,
@@ -4164,20 +4205,10 @@ class DebateManager:
                 websocket,
                 {"type": "message_delta", "stream_id": stream_id, "delta": notice}
             )
-            return f"{existing_content}{separator}{notice}"
+            return f"{existing_content}{separator}{notice}", "error"
 
         combined = f"{existing_content}{separator}{continuation}".strip()
-        if finish_reason in {"length", "max_tokens"}:
-            notice = (
-                "\n\n_Response reached the max-token limit. Increase this role's Max tokens "
-                "in Chat Settings for a fuller answer._"
-            )
-            await self._send_json(
-                websocket,
-                {"type": "message_delta", "stream_id": stream_id, "delta": notice}
-            )
-            combined = f"{combined}{notice}"
-        return combined
+        return combined, finish_reason
 
     def _is_retryable_provider_error(self, exc: Exception) -> bool:
         text = self._provider_error_message(exc).lower()
@@ -4185,6 +4216,9 @@ class DebateManager:
             marker in text
             for marker in (
                 "529",
+                "503",
+                "504",
+                "502",
                 "overloaded",
                 "high load",
                 "temporarily unavailable",
@@ -4232,7 +4266,7 @@ class DebateManager:
             self._transcript_for_model(
                 transcript,
                 model_name=model.name,
-                reserve_tokens=int(generation_settings.get("max_tokens", 700)) + 1400,
+                reserve_tokens=int(generation_settings.get("max_tokens", 2048)) + 1400,
                 hard_turn_cap=24,
                 context_window=int(session_settings.get("context_window", 2)),
                 topic=topic,
@@ -4244,7 +4278,7 @@ class DebateManager:
             char_cap=1200,
         )
         response_length = generation_settings.get("response_length", "Normal")
-        word_limit = {"Concise": 120, "Normal": 180, "Detailed": 260}.get(response_length, 180)
+        word_limit = {"Concise": 200, "Normal": 400, "Detailed": 700}.get(response_length, 400)
         intelligence_excerpt = self._trim_prompt_block(intelligence_context, 900, char_cap=5000)
         recent_self_turns = [
             self._clip_for_prompt(str(turn.get("content", "")), 200)
@@ -4339,12 +4373,12 @@ class DebateManager:
         intelligence_context: str = "",
     ) -> list[dict[str, str]]:
         response_length = generation_settings.get("response_length", "Normal")
-        word_limit = {"Concise": 220, "Normal": 340, "Detailed": 520}.get(response_length, 340)
+        word_limit = {"Concise": 350, "Normal": 600, "Detailed": 1000}.get(response_length, 600)
         transcript_excerpt = self._format_transcript(
             self._transcript_for_model(
                 transcript,
                 model_name=model.name,
-                reserve_tokens=int(generation_settings.get("max_tokens", 700)) + 1800,
+                reserve_tokens=int(generation_settings.get("max_tokens", 2048)) + 1800,
                 hard_turn_cap=48,
                 topic=topic,
             )
@@ -4417,16 +4451,16 @@ class DebateManager:
             char_cap=5000,
         )
         response_length = generation_settings.get("response_length", "Normal")
-        configured_word_limit = {"Concise": 220, "Normal": 360, "Detailed": 560}.get(
-            response_length, 360
+        configured_word_limit = {"Concise": 350, "Normal": 600, "Detailed": 1000}.get(
+            response_length, 600
         )
-        token_word_limit = max(140, int(int(generation_settings.get("max_tokens", 700)) * 0.5))
+        token_word_limit = max(300, int(int(generation_settings.get("max_tokens", 2048)) * 0.5))
         word_limit = min(configured_word_limit, token_word_limit)
         transcript_excerpt = self._format_transcript(
             self._transcript_for_model(
                 transcript,
                 model_name=model.name,
-                reserve_tokens=int(generation_settings.get("max_tokens", 700)) + 2200,
+                reserve_tokens=int(generation_settings.get("max_tokens", 2048)) + 2200,
                 hard_turn_cap=56,
                 topic=topic,
             )
@@ -4510,7 +4544,7 @@ class DebateManager:
             self._transcript_for_model(
                 transcript,
                 model_name=model.name,
-                reserve_tokens=int(generation_settings.get("max_tokens", 700)) + 1600,
+                reserve_tokens=int(generation_settings.get("max_tokens", 2048)) + 1600,
                 hard_turn_cap=28,
                 topic=topic,
             )
@@ -4586,7 +4620,7 @@ class DebateManager:
             self._transcript_for_model(
                 transcript,
                 model_name=model.name,
-                reserve_tokens=int(generation_settings.get("max_tokens", 700)) + 2200,
+                reserve_tokens=int(generation_settings.get("max_tokens", 2048)) + 2200,
                 hard_turn_cap=40,
                 topic=topic,
             )
@@ -4725,7 +4759,7 @@ class DebateManager:
         history = self._chat_history_for_model(
             self.db.list_messages(session_id, include_hidden=True),
             model_name=model.name,
-            reserve_tokens=int(generation_settings.get("max_tokens", 700)) + 1400,
+            reserve_tokens=int(generation_settings.get("max_tokens", 2048)) + 1400,
         )
         system_context = self._trim_prompt_block(self._system_context(session_id), 1000, char_cap=6000)
         profile_context = self._trim_prompt_block(
@@ -4812,7 +4846,7 @@ class DebateManager:
         if not settings.mock_llm and acompletion is not None and route is not None:
             try:
                 messages = self._safety_lock_messages(content)
-                response = await acompletion(
+                _kwargs: dict = dict(
                     model=route.litellm_model,
                     messages=messages,
                     api_key=route.api_key,
@@ -4821,6 +4855,9 @@ class DebateManager:
                     max_tokens=120,
                     timeout=min(settings.request_timeout_seconds, 30),
                 )
+                if route.api_base:
+                    _kwargs["api_base"] = route.api_base
+                response = await acompletion(**_kwargs)
                 text = self._completion_text(response).strip()
                 if cost_tracker is not None:
                     cost_tracker.record_call(
@@ -4927,7 +4964,7 @@ class DebateManager:
         if not settings.mock_llm and acompletion is not None and route is not None:
             try:
                 messages = self._intent_classifier_messages(content, session_id)
-                response = await acompletion(
+                _kwargs: dict = dict(
                     model=route.litellm_model,
                     messages=messages,
                     api_key=route.api_key,
@@ -4936,6 +4973,9 @@ class DebateManager:
                     max_tokens=80,
                     timeout=min(settings.request_timeout_seconds, 30),
                 )
+                if route.api_base:
+                    _kwargs["api_base"] = route.api_base
+                response = await acompletion(**_kwargs)
                 text = self._completion_text(response).strip()
                 if cost_tracker is not None:
                     cost_tracker.record_call(
@@ -5085,7 +5125,7 @@ class DebateManager:
     def _context_slice(self, transcript: list[dict[str, Any]], context_window: int) -> list[dict[str, Any]]:
         return self._transcript_for_model(
             transcript,
-            model_name="gpt-4o-mini",
+            model_name="llama-3.1-8b",
             reserve_tokens=1800,
             hard_turn_cap=24,
             context_window=context_window,

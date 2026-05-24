@@ -101,7 +101,7 @@ export function Sidebar({
         <div className="mb-4">
           <SidebarNavButton
             label="Matrix Overview"
-            icon={<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2.5 7.5L8 2.5l5.5 5v6H10v-4H6v4H2.5z"/></svg>}
+            icon={<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2.5 7.5L8 2.5l5.5 5v6H10v-4H6v4H2.5z" /></svg>}
             active={workspaceView === "session" && selectedId === null}
             onClick={onHome}
           />
@@ -182,25 +182,22 @@ function SidebarNavButton({
     <button
       type="button"
       onClick={onClick}
-      className={`group relative flex w-full items-center gap-3 overflow-hidden rounded-md px-3 py-2.5 text-left transition-all duration-300 ${
-        active 
-          ? 'bg-indigo-500/10 border border-indigo-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]' 
+      className={`group relative flex w-full items-center gap-3 overflow-hidden rounded-md px-3 py-2.5 text-left transition-all duration-300 ${active
+          ? 'bg-indigo-500/10 border border-indigo-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]'
           : 'bg-transparent border border-transparent hover:bg-white/[0.02] hover:border-white/[0.05]'
-      }`}
+        }`}
     >
       {active && (
         <div className="absolute left-0 top-0 h-full w-[2px] bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
       )}
-      <div className={`flex h-6 w-6 items-center justify-center rounded-md transition-all duration-300 ${
-        active 
-          ? 'bg-indigo-500/20 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)]' 
+      <div className={`flex h-6 w-6 items-center justify-center rounded-md transition-all duration-300 ${active
+          ? 'bg-indigo-500/20 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.2)]'
           : 'bg-white/5 text-slate-400 group-hover:text-slate-200 group-hover:bg-white/10'
-      }`}>
+        }`}>
         {icon}
       </div>
-      <span className={`font-mono text-xs uppercase tracking-widest transition-colors duration-300 ${
-        active ? 'text-white font-bold' : 'text-slate-400 group-hover:text-slate-200'
-      }`}>
+      <span className={`font-mono text-xs uppercase tracking-widest transition-colors duration-300 ${active ? 'text-white font-bold' : 'text-slate-400 group-hover:text-slate-200'
+        }`}>
         {label}
       </span>
       {active && (
@@ -254,19 +251,16 @@ function SessionGroup({
                 <button
                   type="button"
                   onClick={() => onSelect(session.id)}
-                  className={`group relative flex w-full items-center gap-2 overflow-hidden rounded-md px-3 py-2 text-left transition-all duration-300 ${
-                    selected 
-                      ? 'bg-white/10 border border-white/20' 
+                  className={`group relative flex w-full items-center gap-2 overflow-hidden rounded-md px-3 py-2 text-left transition-all duration-300 ${selected
+                      ? 'bg-white/10 border border-white/20'
                       : 'bg-transparent border border-transparent hover:bg-white/5'
-                  }`}
+                    }`}
                   title={session.name}
                 >
-                  <div className={`h-1.5 w-1.5 rounded-full transition-all duration-300 ${
-                    selected ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]' : 'bg-slate-600 group-hover:bg-slate-400'
-                  }`} />
-                  <span className={`truncate font-mono text-[11px] transition-colors duration-300 ${
-                    selected ? 'text-white font-bold tracking-wide' : 'text-slate-400 group-hover:text-slate-300'
-                  }`}>
+                  <div className={`h-1.5 w-1.5 rounded-full transition-all duration-300 ${selected ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]' : 'bg-slate-600 group-hover:bg-slate-400'
+                    }`} />
+                  <span className={`truncate font-mono text-[11px] transition-colors duration-300 ${selected ? 'text-white font-bold tracking-wide' : 'text-slate-400 group-hover:text-slate-300'
+                    }`}>
                     {session.name}
                   </span>
                 </button>

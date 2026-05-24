@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { SessionSpawner } from "@/components/orchestration/SessionSpawner";
 import { DebateRoom, type RoomPanel } from "@/components/DebateRoom";
 import { GlobalWorkspace } from "@/components/GlobalWorkspace";
 import { Sidebar, type SidebarWorkspaceView } from "@/components/Sidebar";
@@ -28,9 +29,11 @@ import {
   resetUniversalAgentExperience,
   resetUserDebateProfile,
   renameSession,
+  startRESTDebate,
   submitDebateFeedback,
   submitVerdictReview,
   updateCouncilSettings,
+  updateSessionModels,
   updateSessionSettings,
   WS_BASE
 } from "@/lib/api";
@@ -65,12 +68,24 @@ const DEFAULT_PRACTICE_SETTINGS: PracticeSettings = {
   opponent_difficulty: "Adaptive"
 };
 
-function defaultNewChatDraft(modelName = ""): NewChatDraft {
+function defaultNewChatDraft(): NewChatDraft {
   return {
     mode: "ai_vs_human",
-    overall_model: modelName,
-    debaters_per_team: 2,
-    practice_settings: { ...DEFAULT_PRACTICE_SETTINGS }
+    overall_model: "gemini-2.5-flash",
+    debaters_per_team: 1,
+    ai_a_model: "",
+    ai_b_model: "",
+    judge_model: "",
+    rounds: 3,
+    practice_settings: {
+      human_side: "Auto",
+      practice_flow: "Free",
+      structured_rounds: 3,
+      use_user_profile: true,
+      trainer_style: "Coach",
+      training_focus: "Full Debate",
+      opponent_difficulty: "Normal"
+    }
   };
 }
 
@@ -81,6 +96,10 @@ type NewChatDraft = {
   overall_model: string;
   debaters_per_team: number;
   practice_settings: PracticeSettings;
+  ai_a_model: string;
+  ai_b_model: string;
+  judge_model: string;
+  rounds: number;
 };
 
 export default function Home() {
@@ -110,6 +129,11 @@ export default function Home() {
   >({});
   const [runningBySession, setRunningBySession] = useState<Record<string, boolean>>({});
   const [teamPreparingBySession, setTeamPreparingBySession] = useState<Record<string, boolean>>({});
+  const [currentRoundBySession, setCurrentRoundBySession] = useState<Record<string, number>>({});
+  const [activeSpeakerBySession, setActiveSpeakerBySession] = useState<Record<string, string>>({});
+  const [totalRoundsBySession, setTotalRoundsBySession] = useState<Record<string, number>>({});
+  const [streamingStatusBySession, setStreamingStatusBySession] = useState<Record<string, string>>({});
+  const [realtimeAnalyticsBySession, setRealtimeAnalyticsBySession] = useState<Record<string, any>>({});
   const [models, setModels] = useState<ModelsResponse | null>(null);
   const [councilSettings, setCouncilSettings] = useState<CouncilSettings | null>(null);
   const [agentExperienceOverview, setAgentExperienceOverview] =
@@ -167,6 +191,11 @@ export default function Home() {
   const selectedAnalyticsHistory = selectedId ? analyticsHistoryBySession[selectedId] ?? [] : [];
   const selectedRunning = selectedId ? Boolean(runningBySession[selectedId]) : false;
   const selectedTeamPreparing = selectedId ? Boolean(teamPreparingBySession[selectedId]) : false;
+  const selectedCurrentRound = selectedId ? currentRoundBySession[selectedId] ?? 0 : 0;
+  const selectedTotalRounds = selectedId ? totalRoundsBySession[selectedId] ?? 0 : 0;
+  const selectedActiveSpeaker = selectedId ? activeSpeakerBySession[selectedId] ?? "" : "";
+  const selectedStreamingStatus = selectedId ? streamingStatusBySession[selectedId] ?? "" : "";
+  const selectedRealtimeAnalytics = selectedId ? realtimeAnalyticsBySession[selectedId] ?? null : null;
 
   useEffect(() => {
     modelBySessionRef.current = modelBySession;
@@ -360,8 +389,8 @@ export default function Home() {
   }, [models, selectedId, settingsBySession]);
 
   function openNewSessionModal(mode: ChatSession["mode"] = "ai_vs_ai") {
-    const base = defaultNewChatDraft(models?.models[0]?.name || "");
-    setNewChatDraft({ ...base, mode });
+    const base = defaultNewChatDraft();
+    setNewChatDraft({ ...base, mode, overall_model: models?.models[0]?.name || base.overall_model });
     setNewChatTab("mode");
     setNewChatOpen(true);
     setWorkspaceView("session");
@@ -371,19 +400,21 @@ export default function Home() {
     openNewSessionModal("ai_vs_human");
   }
 
-  async function handleCreateSessionFromDraft() {
+  async function handleCreateSessionFromDraft(overrideDraft?: NewChatDraft, topicOverride?: string) {
     if (creatingSession) {
       return;
     }
     setError(null);
     setCreatingSession(true);
     try {
+      const activeDraft = overrideDraft || newChatDraft;
       const settings: Partial<SessionSettings> = {
-        overall_model: newChatDraft.overall_model,
-        debaters_per_team: newChatDraft.debaters_per_team,
-        practice_settings: newChatDraft.practice_settings
+        overall_model: activeDraft.overall_model,
+        debaters_per_team: activeDraft.debaters_per_team,
+        practice_settings: activeDraft.practice_settings
       };
-      const created = await createSession({ mode: newChatDraft.mode, settings });
+      
+      const created = await createSession({ mode: activeDraft.mode, settings });
       const dynamicNames = [
         "Strategy Session",
         "Strategic Session",
@@ -397,10 +428,42 @@ export default function Home() {
       const newName = `${prefix}${num ? ` #${num}` : ""}`;
       const renamed = await renameSession(created.id, newName);
 
+      // Connect models to the orchestration backend
+      if (activeDraft.ai_a_model || activeDraft.ai_b_model || activeDraft.judge_model) {
+        await updateSessionModels(renamed.id, {
+          ai_a_model: activeDraft.ai_a_model,
+          ai_b_model: activeDraft.ai_b_model,
+          judge_model: activeDraft.judge_model,
+          rounds: activeDraft.rounds || 3,
+        });
+        
+        // Optimistically update the session model state locally
+        setModelBySession((current) => ({
+          ...current,
+          [renamed.id]: activeDraft.overall_model,
+        }));
+      }
+
       setSessions((current) => [renamed, ...current]);
       setSelectedId(renamed.id);
       setStatusBySession((current) => ({ ...current, [renamed.id]: "Ready for a message." }));
       setPracticeStateBySession((current) => ({ ...current, [renamed.id]: { active: false } }));
+      
+      // Auto-start debate if a topic was specified from the SessionSpawner
+      if (topicOverride) {
+        try {
+          const res = await startRESTDebate({
+            session_id: renamed.id,
+            topic: topicOverride
+          });
+          setDebatesBySession((current) => ({ ...current, [renamed.id]: [res.debate] }));
+          setSelectedDebateBySession((current) => ({ ...current, [renamed.id]: res.debate.id }));
+          setMessagesBySession((current) => ({ ...current, [renamed.id]: res.messages }));
+        } catch (e) {
+          console.error("Failed to start debate immediately:", e);
+        }
+      }
+
       setActivePanel("chat");
       setWorkspaceView("session");
       setNewChatOpen(false);
@@ -1241,9 +1304,14 @@ export default function Home() {
           status={selectedStatus}
           error={error}
           assignments={selectedAssignments}
+          currentRound={selectedCurrentRound}
+          totalRounds={selectedTotalRounds}
+          activeSpeaker={selectedActiveSpeaker}
+          streamingStatus={selectedStreamingStatus}
           debates={selectedDebates}
           selectedDebateId={selectedDebateId}
           analytics={selectedAnalytics}
+          realtimeAnalytics={selectedRealtimeAnalytics}
           analyticsHistory={selectedAnalyticsHistory}
           intelligence={selectedIntelligence}
           practiceState={selectedPracticeState}
@@ -1261,6 +1329,7 @@ export default function Home() {
           onDebateChange={handleDebateChange}
           onSend={handleSend}
           onEndPractice={handleEndPracticeDebate}
+          onNewDebate={() => setNewChatOpen(true)}
           onSettingsChange={handleUpdateSettings}
           onCouncilSettingsChange={handleUpdateCouncilSettings}
           onResetUniversalIdentities={handleResetUniversalIdentities}
@@ -1293,16 +1362,21 @@ export default function Home() {
         />
       )}
       {newChatOpen ? (
-        <NewChatModal
-          draft={newChatDraft}
-          activeTab={newChatTab}
-          models={models}
-          isCreating={creatingSession}
-          onTabChange={setNewChatTab}
-          onDraftChange={setNewChatDraft}
-          onCancel={() => setNewChatOpen(false)}
-          onCreate={handleCreateSessionFromDraft}
-        />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setNewChatOpen(false)} />
+          <div className="relative w-full max-w-4xl bg-zinc-950 border border-white/10 rounded-2xl p-6 shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
+            <SessionSpawner
+              models={models}
+              onSpawn={(draft, topic) => {
+                setNewChatDraft(draft);
+                handleCreateSessionFromDraft(draft, topic);
+              }}
+              onCancel={() => setNewChatOpen(false)}
+              isCreating={creatingSession}
+              initialDraft={newChatDraft}
+            />
+          </div>
+        </div>
       ) : null}
       {practiceStartTarget ? (
         <PracticeStartDialog
@@ -1398,409 +1472,3 @@ function formatErrorMessage(value: unknown): string {
   return String(value || "Something went wrong.");
 }
 
-function NewChatModal({
-  draft,
-  activeTab,
-  models,
-  isCreating,
-  onTabChange,
-  onDraftChange,
-  onCancel,
-  onCreate
-}: {
-  draft: NewChatDraft;
-  activeTab: "mode" | "settings";
-  models: ModelsResponse | null;
-  isCreating: boolean;
-  onTabChange: (tab: "mode" | "settings") => void;
-  onDraftChange: (updater: (current: NewChatDraft) => NewChatDraft) => void;
-  onCancel: () => void;
-  onCreate: () => void;
-}) {
-  const unlockedModels = models?.models ?? [];
-  const selectedModel = draft.overall_model || unlockedModels[0]?.name || "";
-  const updatePractice = (updates: Partial<PracticeSettings>) => {
-    onDraftChange((current) => ({
-      ...current,
-      practice_settings: { ...current.practice_settings, ...updates }
-    }));
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div className="flex max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-md sm-modal">
-        <aside className="w-44 shrink-0 border-r sm-card p-3">
-          {(["mode", "settings"] as const).map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => onTabChange(tab)}
-              className={`mb-2 w-full rounded-md px-3 py-3 text-left text-sm font-semibold ${
-                activeTab === tab ? "bg-zinc-950 text-white" : " hover:sm-card"
-              }`}
-            >
-              {tab === "mode" ? "Mode" : "Chat Settings"}
-            </button>
-          ))}
-        </aside>
-        <section className="min-w-0 flex-1 overflow-y-auto p-5">
-          <div className="mb-4">
-            <p className="text-sm font-medium ">New chat</p>
-            <h2 className="text-2xl font-semibold ">Create a session</h2>
-            <p className="mt-2 text-sm leading-6 ">
-              Training mode is the fastest way to feel the app's value. Council mode stays here
-              when you want to observe full team debates and inspect the intelligence layer.
-            </p>
-          </div>
-
-          {activeTab === "mode" ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              <ModeChoice
-                title="Autonomous Alignment Simulation"
-                active={draft.mode === "ai_vs_ai"}
-                description="Two AI clusters analyze the objective, then the System Auditor and Judge synthesize the result."
-                onClick={() => onDraftChange((current) => ({ ...current, mode: "ai_vs_ai" }))}
-              />
-              <ModeChoice
-                title="Human-AI Alignment Simulation"
-                active={draft.mode === "ai_vs_human"}
-                description="You synchronize with the AI Strategist, then the System Judge and Strategy Coach evaluate your approach."
-                onClick={() => onDraftChange((current) => ({ ...current, mode: "ai_vs_human" }))}
-              />
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <label className="block text-sm font-medium text-zinc-900">
-                Overall model
-                <select
-                  value={selectedModel}
-                  onChange={(event) =>
-                    onDraftChange((current) => ({ ...current, overall_model: event.target.value }))
-                  }
-                  className="mt-1 h-11 w-full rounded-md sm-card px-3"
-                >
-                  {unlockedModels.length === 0 ? <option value="">No verified models</option> : null}
-                  {unlockedModels.map((model) => (
-                    <option key={model.name} value={model.name}>
-                      {model.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {draft.mode === "ai_vs_ai" ? (
-                <label className="block text-sm font-medium text-zinc-900">
-                  Debater amount per team
-                  <select
-                    value={draft.debaters_per_team}
-                    onChange={(event) =>
-                      onDraftChange((current) => ({
-                        ...current,
-                        debaters_per_team: Number(event.target.value)
-                      }))
-                    }
-                    className="mt-1 h-11 w-full rounded-md sm-card px-3"
-                  >
-                    {[1, 2, 3, 4].map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <SelectField
-                    label="Human side default"
-                    value={draft.practice_settings.human_side}
-                    options={["Auto", "Pro", "Con"]}
-                    onChange={(value) => updatePractice({ human_side: value as PracticeSettings["human_side"] })}
-                  />
-                  <SelectField
-                    label="Practice flow"
-                    value={draft.practice_settings.practice_flow}
-                    options={["Free", "Structured"]}
-                    onChange={(value) =>
-                      updatePractice({ practice_flow: value as PracticeSettings["practice_flow"] })
-                    }
-                  />
-                  {draft.practice_settings.practice_flow === "Structured" ? (
-                    <label className="block text-sm font-medium text-zinc-900">
-                      Structured rounds
-                      <input
-                        type="number"
-                        min={1}
-                        max={12}
-                        value={draft.practice_settings.structured_rounds}
-                        onChange={(event) =>
-                          updatePractice({
-                            structured_rounds: Math.max(1, Math.min(12, Number(event.target.value) || 1))
-                          })
-                        }
-                        className="mt-1 h-11 w-full rounded-md sm-card px-3"
-                      />
-                    </label>
-                  ) : null}
-                  <SelectField
-                    label="Opponent difficulty"
-                    value={draft.practice_settings.opponent_difficulty}
-                    options={["Adaptive", "Beginner", "Normal", "Hard"]}
-                    onChange={(value) =>
-                      updatePractice({
-                        opponent_difficulty: value as PracticeSettings["opponent_difficulty"]
-                      })
-                    }
-                  />
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="mt-6 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={isCreating}
-              className="rounded-md sm-card px-4 py-2 text-sm font-semibold  hover:sm-card"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={onCreate}
-              disabled={isCreating}
-              className="rounded-md sm-btn sm-btn-primary hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isCreating ? "Creating..." : "Create Chat"}
-            </button>
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function ModeChoice({
-  title,
-  description,
-  active,
-  onClick
-}: {
-  title: string;
-  description: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-md border p-4 text-left ${
-        active ? "border-zinc-950 sm-card" : " "
-      }`}
-    >
-      <p className="font-semibold ">{title}</p>
-      <p className="mt-2 text-sm leading-6 ">{description}</p>
-    </button>
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  options,
-  onChange
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="block text-sm font-medium text-zinc-900">
-      {label}
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="mt-1 h-11 w-full rounded-md sm-card px-3"
-      >
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function PracticeStartDialog({
-  side,
-  onSideChange,
-  onCancel,
-  onConfirm
-}: {
-  side: "Auto" | "Pro" | "Con";
-  onSideChange: (side: "Auto" | "Pro" | "Con") => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg rounded-md sm-card p-5 shadow-xl">
-        <h2 className="text-lg font-semibold ">Choose your side</h2>
-        <p className="mt-2 text-sm leading-6 ">
-          Pro supports the topic. Con challenges it. Auto chooses the side that best helps your stored debate profile improve.
-        </p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          {(["Auto", "Pro", "Con"] as const).map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => onSideChange(option)}
-              className={`rounded-md border px-4 py-3 text-sm font-semibold ${
-                side === option ? "border-zinc-950 sm-card" : " "
-              }`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-md sm-card px-4 py-2 text-sm font-medium  hover:sm-card"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className="rounded-md sm-btn sm-btn-primary hover:bg-zinc-800"
-          >
-            Start Practice
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ConfirmDialog({
-  title,
-  body,
-  confirmLabel,
-  suppressLabel,
-  isWorking,
-  error,
-  onCancel,
-  onConfirm
-}: {
-  title: string;
-  body: string;
-  confirmLabel: string;
-  suppressLabel?: string;
-  isWorking: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onConfirm: (suppressFuture?: boolean) => void;
-}) {
-  const [suppressFuture, setSuppressFuture] = useState(false);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    setSuppressFuture(false);
-  }, [title, body]);
-
-  useEffect(() => {
-    const focusable = dialogRef.current?.querySelector<HTMLElement>(
-      "button, input, select, textarea, [tabindex]:not([tabindex='-1'])"
-    );
-    focusable?.focus();
-  }, [title, body]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !isWorking) {
-        onCancel();
-      }
-      if (event.key !== "Tab" || !dialogRef.current) {
-        return;
-      }
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(
-          "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])"
-        )
-      ).filter((element) => element.offsetParent !== null);
-      if (focusable.length === 0) {
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isWorking, onCancel]);
-
-  const workingLabel = confirmLabel.startsWith("Clear")
-    ? "Clearing..."
-    : confirmLabel.startsWith("Rename")
-      ? "Renaming..."
-      : "Deleting...";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={(e) => { if (e.target === e.currentTarget && !isWorking) onCancel(); }}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-dialog-title"
-        ref={dialogRef}
-        className="w-full max-w-md rounded-md sm-card p-5 shadow-xl"
-      >
-        <h2 id="confirm-dialog-title" className="text-lg font-semibold ">{title}</h2>
-        <p className="mt-2 text-sm leading-6 ">{body}</p>
-        {error ? (
-          <p className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
-            {error}
-          </p>
-        ) : null}
-        {suppressLabel ? (
-          <label className="mt-4 flex items-center gap-2 text-sm ">
-            <input
-              type="checkbox"
-              checked={suppressFuture}
-              onChange={(event) => setSuppressFuture(event.target.checked)}
-              className="h-4 w-4"
-            />
-            {suppressLabel}
-          </label>
-        ) : null}
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={isWorking}
-            className="rounded-md sm-card px-4 py-2 text-sm font-medium  hover:sm-card"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => onConfirm(suppressFuture)}
-            disabled={isWorking}
-            className="rounded-md sm-btn sm-btn-danger disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isWorking ? workingLabel : confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}

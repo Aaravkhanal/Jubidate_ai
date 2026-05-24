@@ -1,7 +1,13 @@
 from pathlib import Path
+import logging
 import os
 
 from dotenv import load_dotenv
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:     %(name)s — %(message)s",
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -15,7 +21,7 @@ class Settings:
     app_name = "Jubidate AI"
     max_sessions = 10
     max_active_debates = 3
-    request_timeout_seconds = int(os.getenv("LITELLM_TIMEOUT_SECONDS", "120"))
+    request_timeout_seconds = int(os.getenv("LITELLM_TIMEOUT_SECONDS", "300"))
     mock_llm = os.getenv("MOCK_LLM_RESPONSES", "false").lower() == "true"
 
     @property

@@ -5,6 +5,10 @@ export type ChatSession = {
   default_index: number;
   created_at: string;
   updated_at: string;
+  ai_a_model: string;
+  ai_b_model: string;
+  judge_model: string;
+  rounds: number;
 };
 
 export type PracticeSettings = {
