@@ -17,7 +17,6 @@
 ## 📖 Table of Contents
 - [Project Vision](#-project-vision)
 - [Live Demo](#-live-demo)
-- [Platform Showcase](#-platform-showcase)
 - [Core Architecture](#-core-architecture)
 - [How It Works](#-how-it-works-the-node-system)
 - [Quick Start Guide](#-quick-start-guide)
@@ -38,30 +37,6 @@ This project was built to demonstrate advanced full-stack engineering, robust We
 
 ---
 
-## 📸 Platform Showcase
-
-### 1. Neural Orchestration & Strategy Sessions
-> **Screenshot Suggestion:** *Add an image of the main Debate UI showing the Judge's Verdict and the Pro/Con arguments.*
-
-<img src="https://via.placeholder.com/800x450.png?text=Strategy+Session+Dashboard" width="800" alt="Strategy Session Dashboard" />
-
-*The Strategy Session UI where multiple AI agents debate in real-time. The interface clearly separates the arguments from the Pro side, Con side, and the final ruling from the Supreme Adjudicator.*
-
-### 2. Autonomous Adjudication
-> **Screenshot Suggestion:** *Add an image showing the "Statistics the Judge Should Consider" and "Evidence Quality Warnings" sections.*
-
-<img src="https://via.placeholder.com/800x450.png?text=Judge+Analytics+Panel" width="800" alt="Judge Analytics Panel" />
-
-*The Judge agent synthesizes arguments, highlights "Best Affirmative" and "Best Skeptical" points, and identifies gaps in reasoning or areas requiring further empirical evidence.*
-
-### 3. Agent Memory & System Core
-> **Screenshot Suggestion:** *Add an image of the sidebar panels like Matrix Overview, Agent Memory, or Command Center.*
-
-<img src="https://via.placeholder.com/800x450.png?text=Agent+Memory+and+Matrix" width="800" alt="Agent Memory" />
-
-*Tracks the cognitive flow, tracks agent experiences, and allows for deep customization of the debate rounds and intelligence parameters.*
-
----
 
 ## ⚙️ Core Architecture
 Built with a strict separation of concerns to handle high-frequency WebSocket streams and complex frontend states seamlessly.
