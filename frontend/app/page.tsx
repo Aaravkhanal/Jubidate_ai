@@ -6,6 +6,8 @@ import { SessionSpawner } from "@/components/orchestration/SessionSpawner";
 import { DebateRoom, type RoomPanel } from "@/components/DebateRoom";
 import { GlobalWorkspace } from "@/components/GlobalWorkspace";
 import { Sidebar, type SidebarWorkspaceView } from "@/components/Sidebar";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { PracticeStartDialog } from "@/components/shared/PracticeStartDialog";
 import {
   getAiDebaterExperiences,
   clearSessionHistory,
